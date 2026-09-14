@@ -356,16 +356,26 @@ impl<'a> Counter<'a> {
     }
 
     fn parse_end_of_quote(&mut self, lang: &'a LanguageDef, window: &[u8]) -> Option<usize> {
-        let quote = self.quote?;
-        if window.starts_with(quote.as_bytes()) {
-            self.quote = None;
-            return Some(quote.len());
+        if let Some(quote) = self.quote {
+            if window.starts_with(quote.as_bytes()) {
+                self.quote = None;
+                return Some(quote.len());
+            }
         }
+
         if self.quote_is_verbatim {
             return None;
         }
+
         // An escaped backslash, or an escaped quote character: skip both bytes
-        // so the escapee cannot close the string.
+        // so the escapee is inert.
+        //
+        // This deliberately applies in plain mode as well as inside a string.
+        // Escaped quotes turn up in plain code all the time -- a Perl regex
+        // like `s/^\"|\"$//g` or a shell `echo \"hi\"` -- and treating the
+        // `\"` as an opening quote would swallow the rest of the file as a
+        // string literal. tokei gets this right by accident of `?`
+        // short-circuiting inside an `&&`; we do it on purpose.
         if window.starts_with(br"\\") {
             return Some(2);
         }
@@ -768,6 +778,29 @@ fn main() {
         // "a\\" is a complete string; the `//` that follows is a comment.
         let src = "let s = \"a\\\\\"; // done\nlet t = 1;\n";
         assert_eq!(prod(&count_as("Rust", src)), (2, 0, 0));
+    }
+
+    #[test]
+    fn an_escaped_quote_in_plain_code_does_not_open_a_string() {
+        // A Perl regex full of escaped quotes. If the `\"` were taken as an
+        // opening quote, the rest of the file would be swallowed as a string
+        // literal and the comments below would count as code.
+        let src = "$name =~ s/^\\\"|\\\"$//g;\n# a comment\n# another\n";
+        assert_eq!(prod(&count_as("Perl", src)), (1, 2, 0));
+    }
+
+    #[test]
+    fn an_escaped_quote_in_plain_code_is_inert_in_shell_too() {
+        let src = "echo \\\"hi\\\"\n# comment\n";
+        assert_eq!(prod(&count_as("Sh", src)), (1, 1, 0));
+    }
+
+    #[test]
+    fn a_real_quote_after_an_escaped_one_still_opens_a_string() {
+        // `\"` is skipped, then the bare `"` opens a string that runs on.
+        let src = "x = \\\" \"still open\nstill in the string\n";
+        let stats = count_as("Perl", src);
+        assert_eq!(prod(&stats), (2, 0, 0));
     }
 
     #[test]

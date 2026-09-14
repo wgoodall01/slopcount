@@ -199,26 +199,61 @@ tools count.
 
 ## Reproducing
 
-```sh
-git clone --depth 1 https://github.com/torvalds/linux.git
-rm -rf linux/.git                     # so every tool sees the same files
-cargo build --release
+Everything above is produced by [`scripts/benchmark.nu`](scripts/benchmark.nu),
+which clones the corpora, times every tool, records what each one counted, and
+writes the raw results to one JSON file:
 
+```sh
+cargo build --release
+./scripts/benchmark.nu --tempdir ~/temp-bench --out results.json
+```
+
+It needs `nu`, `git` and `hyperfine`; any of tokei, cloc or sloccount that are
+missing are reported and skipped rather than failing the run.
+
+| Flag | Effect |
+| --- | --- |
+| `--tempdir PATH` | where checkouts live (required); reused across runs |
+| `--out PATH` | results JSON (default `benchmark-results.json`) |
+| `--corpora linux,chromium` | subset to run |
+| `--runs-fast N`, `--runs-slow N` | hyperfine runs (default 10 / 3) |
+| `--skip cloc,sloccount` | leave tools out |
+| `--slopcount PATH` | use a different binary |
+| `--keep-going` | carry on when one tool fails |
+
+Checkouts are left in `--tempdir` and reused. Each one carries a
+`.slopcount-bench.json` manifest recording the URL and commit it came from, so
+a reused tree is verified rather than assumed — `.git` is deleted after
+cloning, and the manifest is what keeps the tree identifiable.
+
+Budget roughly 8 GB of disk for Linux and 20 GB for Chromium while cloning; the
+script refuses to start a clone that would not fit.
+
+### The results file
+
+```
+{ schema, generated_at, machine, tools[], settings,
+  corpora: [ { name, url, commit, files, bytes,
+               timings[]  — mean/stddev/median/min/max/user/system + every raw time
+               memory[]   — peak RSS per tool
+               counts     — per tool: totals and per-language code/comments/blanks/files
+             } ] }
+```
+
+Two things worth knowing when comparing the `counts`:
+
+- Each tool's **file count** is recorded next to its line counts. Tools disagree
+  about which files to read as much as they disagree about lines, and this is
+  where that shows up first.
+- tokei's per-language rows **exclude** lines it moved into an embedded child
+  language, while its `Total` **includes** them. The script records both — the
+  per-language figures and a `children` list of what moved where — so a
+  comparison is not misled by either.
+
+### Doing it by hand
+
+```sh
 hyperfine --warmup 2 --runs 10 \
   -n slopcount "./target/release/slopcount linux --max-file-size 0 --doc-strings-as-code" \
   -n tokei     "tokei linux"
-hyperfine --warmup 1 --runs 3 -n cloc      "cloc linux --quiet"
-hyperfine            --runs 3 -n sloccount "sloccount linux"
 ```
-
-For concordance, dump each tool's per-language counts and compare:
-
-```sh
-./target/release/slopcount linux --max-file-size 0 --doc-strings-as-code --format json
-tokei linux -o json
-cloc linux --quiet --json
-```
-
-Note that tokei's per-language rows *exclude* lines it moved into child
-languages while its `Total` *includes* them, so compare totals and per-language
-rows separately.

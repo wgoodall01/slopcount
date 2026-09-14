@@ -318,7 +318,8 @@ it is in. They are listed with reasons in `pkg/core/tests/tokei_parity.rs`.
 
 Measured against tokei, cloc and the original sloccount on the Linux kernel and
 the Chromium sources. Full detail, including how every divergence was chased to
-a cause, is in [BENCHMARKS.md](BENCHMARKS.md).
+a cause, is in [BENCHMARKS.md](BENCHMARKS.md); the whole thing is reproducible
+with [`scripts/benchmark.nu`](scripts/benchmark.nu).
 
 Wall time, warm cache, M2 Max:
 
@@ -352,11 +353,6 @@ treating Chromium's `.grd` resources as XML. sloccount is only −1.0% against t
 languages it actually has counters for — a 2004 tool has no JSON, HTML,
 TypeScript or Rust, which is 30% of Chromium.
 
-Running this comparison found a real bug in slopcount: an escaped quote in
-plain code (`s/^\"|\"$//g`) opened a string literal that swallowed the rest of
-the file. None of the 206 tokei fixtures contained that shape; 96,000 kernel
-files did.
-
 ## Layout
 
 ```
@@ -370,6 +366,7 @@ pkg/cli    slopcount_cli — the `slopcount` binary
   path_ref parsing of `.` / `git:origin/main` into a source
   repo     locating the repo and its default branch
   render   rows, tables, JSON and CSV
+scripts    benchmark.nu — the BENCHMARKS.md methodology, start to finish
 ```
 
 ## Building

@@ -1,0 +1,21 @@
+[package]
+name = "slopcount_core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+aho-corasick.workspace = true
+anyhow.workspace = true
+async-trait.workspace = true
+futures.workspace = true
+gix.workspace = true
+globset.workspace = true
+ignore.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["fs", "io-util", "rt", "macros", "sync"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread"] }

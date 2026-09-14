@@ -1,0 +1,114 @@
+{
+  "_comment": [
+    "Deep-object-merged on top of tokei's languages.json. Only describes the",
+    "extra dimensions slopcount adds on top of tokei's model.",
+    "",
+    "Per-language keys:",
+    "  test_paths  - globs matched against the file's repo-relative path. A match",
+    "                marks the *entire file* as test code.",
+    "  test_blocks - line prefixes (matched against the trimmed line, in plain",
+    "                mode only) that open a region of test code. The region is",
+    "                delimited per `test_block_style`.",
+    "  test_block_style - \"braces\" (default): the region runs until brace depth",
+    "                returns to zero after the first `{`. \"indent\": the region runs",
+    "                while lines are indented deeper than the marker line."
+  ],
+
+  "global": {
+    "test_paths": [
+      "**/tests/**", "**/test/**", "**/__tests__/**", "**/testdata/**",
+      "**/spec/**", "**/specs/**", "**/__mocks__/**", "**/fixtures/**",
+      "**/*.snap"
+    ]
+  },
+
+  "languages": {
+    "Rust": {
+      "test_paths": ["**/tests/**", "**/benches/**"],
+      "test_blocks": ["#[cfg(test)]", "#[test]", "#[tokio::test]", "#[bench]", "#[rstest]", "#[test_case"],
+      "test_block_style": "braces"
+    },
+    "Go": {
+      "test_paths": ["**/*_test.go"],
+      "test_blocks": ["func Test", "func Benchmark", "func Fuzz", "func Example"],
+      "test_block_style": "braces"
+    },
+    "Python": {
+      "test_paths": ["**/test_*.py", "**/*_test.py", "**/conftest.py"],
+      "test_blocks": ["def test_", "async def test_", "class Test"],
+      "test_block_style": "indent"
+    },
+    "JavaScript": {
+      "test_paths": ["**/*.test.js", "**/*.spec.js", "**/*.test.mjs", "**/*.spec.mjs", "**/*.test.cjs", "**/*.spec.cjs"],
+      "test_blocks": ["describe(", "describe.each", "it(", "it.each", "test(", "test.each", "suite(", "bench("],
+      "test_block_style": "braces"
+    },
+    "Jsx": {
+      "test_paths": ["**/*.test.jsx", "**/*.spec.jsx"],
+      "test_blocks": ["describe(", "it(", "test(", "suite("],
+      "test_block_style": "braces"
+    },
+    "TypeScript": {
+      "test_paths": ["**/*.test.ts", "**/*.spec.ts", "**/*.test.mts", "**/*.spec.mts"],
+      "test_blocks": ["describe(", "describe.each", "it(", "it.each", "test(", "test.each", "suite(", "bench("],
+      "test_block_style": "braces"
+    },
+    "Tsx": {
+      "test_paths": ["**/*.test.tsx", "**/*.spec.tsx"],
+      "test_blocks": ["describe(", "it(", "test(", "suite("],
+      "test_block_style": "braces"
+    },
+    "Java": {
+      "test_paths": ["**/src/test/**", "**/*Test.java", "**/*Tests.java", "**/Test*.java"],
+      "test_blocks": ["@Test", "@ParameterizedTest", "@RepeatedTest"],
+      "test_block_style": "braces"
+    },
+    "Kotlin": {
+      "test_paths": ["**/src/test/**", "**/*Test.kt", "**/*Tests.kt"],
+      "test_blocks": ["@Test", "@ParameterizedTest"],
+      "test_block_style": "braces"
+    },
+    "Scala": {
+      "test_paths": ["**/src/test/**", "**/*Test.scala", "**/*Spec.scala"]
+    },
+    "CSharp": {
+      "test_paths": ["**/*Test.cs", "**/*Tests.cs", "**/*.Tests/**"],
+      "test_blocks": ["[Test]", "[TestMethod]", "[Fact]", "[Theory]"],
+      "test_block_style": "braces"
+    },
+    "Ruby": {
+      "test_paths": ["**/*_spec.rb", "**/*_test.rb"]
+    },
+    "Php": {
+      "test_paths": ["**/*Test.php", "**/tests/**"]
+    },
+    "Swift": {
+      "test_paths": ["**/*Tests.swift", "**/*Test.swift"],
+      "test_blocks": ["func test", "@Test"],
+      "test_block_style": "braces"
+    },
+    "Elixir": {
+      "test_paths": ["**/test/**", "**/*_test.exs"],
+      "test_blocks": ["test \"", "describe \""],
+      "test_block_style": "indent"
+    },
+    "C": {
+      "test_paths": ["**/*_test.c", "**/test_*.c"]
+    },
+    "Cpp": {
+      "test_paths": ["**/*_test.cpp", "**/*_test.cc", "**/test_*.cpp"],
+      "test_blocks": ["TEST(", "TEST_F(", "TEST_P(", "TYPED_TEST(", "BENCHMARK("],
+      "test_block_style": "braces"
+    },
+    "Zig": {
+      "test_blocks": ["test \""],
+      "test_block_style": "braces"
+    },
+    "Lua": {
+      "test_paths": ["**/*_spec.lua", "**/*_test.lua"]
+    },
+    "Haskell": {
+      "test_paths": ["**/test/**", "**/*Spec.hs"]
+    }
+  }
+}

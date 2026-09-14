@@ -314,12 +314,48 @@ re-attributes the contents of Rust doc comments, Markdown code fences and HTML
 for telling code, docs and tests apart, a doc comment is a comment of the file
 it is in. They are listed with reasons in `pkg/core/tests/tokei_parity.rs`.
 
-## Performance
+## Benchmarks
 
-Counting is spread across the runtime's worker threads, one task per file, and
-each file is streamed through a `BufReader` so memory is bounded by the longest
-line rather than the largest file. On a warm cache, 10M lines across 29k files
-takes about 1.9s on an M-series laptop.
+Measured against tokei, cloc and the original sloccount on the Linux kernel and
+the Chromium sources. Full detail, including how every divergence was chased to
+a cause, is in [BENCHMARKS.md](BENCHMARKS.md).
+
+Wall time, warm cache, M2 Max:
+
+| Tool | Linux (1.7 GB, 96k files) | Chromium (5.3 GB, 506k files) | Peak RSS |
+| --- | ---: | ---: | ---: |
+| tokei | 5.47 s | 27.74 s | 389 MB |
+| **slopcount** | **6.37 s** | **34.15 s** | **52 MB** |
+| cloc | 79.92 s | 387.79 s | 545 MB |
+| sloccount | 204.42 s | 489.68 s | 60 MB |
+
+About 1.2× behind tokei, and 11–32× ahead of the Perl and shell tools. Counting
+is spread across the runtime's worker threads, one task per file, and each file
+is streamed through a `BufReader`, so memory is bounded by the longest line
+rather than the largest file or the size of the tree.
+
+Counts agree with tokei to **+0.00%** of code lines on the Linux kernel (45 of
+51 languages match to the line) and **+0.17%** on Chromium:
+
+| Tool | Δ code vs tokei, Linux | Δ code vs tokei, Chromium |
+| --- | ---: | ---: |
+| **slopcount** | **+0.00%** | **+0.17%** |
+| cloc | −5.78% | +10.73% |
+| sloccount | −12.3% | −41.1% |
+
+The remaining slopcount differences are all understood: shebang detection finds
+extension-less scripts tokei skips; doc comments stay with their host file
+rather than moving to a Markdown child; and binary detection skips 14 MPEG
+transport-stream files in Chromium that tokei counts as 18,163 lines of
+"TypeScript". cloc's swings are missing Device Tree support on Linux and
+treating Chromium's `.grd` resources as XML. sloccount is only −1.0% against the
+languages it actually has counters for — a 2004 tool has no JSON, HTML,
+TypeScript or Rust, which is 30% of Chromium.
+
+Running this comparison found a real bug in slopcount: an escaped quote in
+plain code (`s/^\"|\"$//g`) opened a string literal that swallowed the rest of
+the file. None of the 206 tokei fixtures contained that shape; 96,000 kernel
+files did.
 
 ## Layout
 

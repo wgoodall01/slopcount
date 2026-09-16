@@ -3,6 +3,8 @@ name = "slopcount_core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+description = "Line counting engine behind slopcount: code, comments, blanks and tests"
 
 [dependencies]
 aho-corasick.workspace = true

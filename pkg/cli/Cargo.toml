@@ -3,6 +3,8 @@ name = "slopcount_cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+description = "Count lines of code, comments, blanks and tests across a tree or a git revision"
 
 [[bin]]
 name = "slopcount"
@@ -20,3 +22,17 @@ tokio = { workspace = true, features = ["full"] }
 
 [dev-dependencies]
 tempfile.workspace = true
+
+# cargo-binstall pulls prebuilt binaries straight from the GitHub release that
+# .github/workflows/release.yml cuts for each `v*` tag. Keep the URL and the
+# archive layout in sync with that workflow.
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/slopcount-{ target }{ archive-suffix }"
+bin-dir = "slopcount-{ target }/{ bin }{ binary-ext }"
+pkg-fmt = "tgz"
+
+[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
+pkg-fmt = "zip"
+
+[package.metadata.binstall.overrides.aarch64-pc-windows-msvc]
+pkg-fmt = "zip"

@@ -1,0 +1,105 @@
+{
+  "_comment": [
+    "Families group related languages so they can be counted together: a row",
+    "for `JavaScript` that adds up TypeScript, TSX, JSX and friends is usually",
+    "the number you actually wanted.",
+    "",
+    "Keys are family names as they appear in the report. Each family lists the",
+    "language *keys* from languages.json that belong to it; a language may",
+    "belong to at most one family, and anything unclaimed falls under `Other`."
+  ],
+
+  "families": {
+    "JavaScript": {
+      "languages": [
+        "JavaScript", "TypeScript", "Jsx", "Tsx", "ArkTS", "CoffeeScript",
+        "LiveScript", "ReScript", "Elm", "Svelte", "Vue", "Astro", "GlimmerJs",
+        "GlimmerTs", "Qml"
+      ]
+    },
+    "Web": {
+      "languages": [
+        "Html", "Css", "Sass", "Less", "Stylus", "PostCss", "Svg", "Handlebars",
+        "Mustache", "Pug", "Haml", "Liquid", "Twig", "Jinja2", "Tera",
+        "FreeMarker", "Velocity", "Blade", "Razor", "Gohtml", "RubyHtml",
+        "Templ", "Slint", "Dust"
+      ]
+    },
+    "Documentation": {
+      "languages": [
+        "Markdown", "Mdx", "ReStructuredText", "Text", "AsciiDoc", "Org",
+        "Djot", "Tex", "Typst", "PlantUml", "D2", "Gherkin", "Po",
+        "UnrealDeveloperMarkdown"
+      ]
+    },
+    "Configuration": {
+      "languages": [
+        "Json", "Yaml", "Toml", "Ini", "Xml", "Hcl", "Dhall", "Cue", "Jsonnet",
+        "Edn", "RON", "Nix", "Bicep", "OpenPolicyAgent", "Puppet", "Xaml",
+        "AvaloniaXaml", "NuGetConfig", "XcodeConfig", "ForgeConfig",
+        "DotNetResource", "MsBuild", "VisualStudioProject",
+        "VisualStudioSolution", "UnrealPlugin", "UnrealProject", "ModuleDef",
+        "DeviceTree", "LinkerScript"
+      ]
+    },
+    "Build": {
+      "languages": [
+        "Makefile", "CMake", "Dockerfile", "Bazel", "Meson", "Just", "Scons",
+        "Autoconf", "Automake", "M4", "Cabal", "Ebuild", "PacmanMakepkg",
+        "RPMSpecfile", "Rakefile", "Bitbake", "Nextflow", "Snakemake"
+      ]
+    },
+    "Shell": {
+      "languages": [
+        "Sh", "Bash", "Zsh", "Fish", "Ksh", "CShell", "Elvish", "Nushell",
+        "PowerShell", "Batch", "AWK", "AutoHotKey", "Autoit", "VimScript",
+        "KakouneScript"
+      ]
+    },
+    "Systems": {
+      "languages": [
+        "C", "CHeader", "Cpp", "CppHeader", "CppModule", "Rust", "Zig", "Go",
+        "D", "Nim", "Odin", "Vala", "Ada", "Pascal", "FortranLegacy",
+        "FortranModern", "Assembly", "AssemblyGAS", "LLVM", "WebAssembly",
+        "ObjectiveC", "ObjectiveCpp", "Swift", "Cuda", "OpenCL", "HolyC",
+        "Virgil", "C3", "Jai"
+      ]
+    },
+    "JVM": {
+      "languages": [
+        "Java", "Kotlin", "Scala", "Groovy", "Clojure", "ClojureC",
+        "ClojureScript", "Xtend", "Ceylon", "Gleam"
+      ]
+    },
+    "DotNet": {
+      "languages": ["CSharp", "FSharp", "VisualBasic", "VB6", "VBScript", "Cil", "Asp", "AspNet"]
+    },
+    "Scripting": {
+      "languages": [
+        "Python", "Cython", "Jupyter", "Mojo", "Ruby", "Perl", "Raku", "Php",
+        "Lua", "Tcl", "MoonScript", "Hy", "Elisp", "Janet", "Fennel", "Scheme",
+        "Racket", "Lisp", "Smalltalk", "Crystal", "Dart", "Julia", "R",
+        "Stata", "Erlang", "Elixir", "Haxe", "ActionScript"
+      ]
+    },
+    "Functional": {
+      "languages": [
+        "Haskell", "OCaml", "Sml", "PureScript", "Idris", "Agda", "Coq", "Lean",
+        "Isabelle", "Unison", "Roc", "Koka", "Futhark", "Fstar"
+      ]
+    },
+    "Data": {
+      "languages": [
+        "Sql", "PRQL", "Graphql", "Protobuf", "Thrift", "FlatBuffers", "Asn1",
+        "EdgeQL", "ESDL", "JSLT", "Jq", "Hledger", "Bean", "Stan"
+      ]
+    },
+    "Hardware": {
+      "languages": [
+        "Verilog", "VerilogArgsFile", "SystemVerilog", "Vhdl", "Glsl", "Hlsl",
+        "WGSL", "Metal", "Slang", "ShaderLab", "GdShader", "Spice", "OpenQasm",
+        "Qcl"
+      ]
+    }
+  }
+}

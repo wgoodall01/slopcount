@@ -28,6 +28,13 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
+    if args.list_families {
+        list_families();
+        return Ok(());
+    }
+
+    render::set_color(args.color() && args.format == Format::Table);
+
     let output = run(&args).await?;
     print!("{output}");
     Ok(())
@@ -53,8 +60,10 @@ async fn run(args: &Cli) -> anyhow::Result<String> {
     let config = walk_config(args)?;
 
     let dimension = args.dimension();
+    let group = args.group_families();
     let heading = match dimension {
         Dimension::Language => "LANGUAGE",
+        Dimension::Family => "FAMILY",
         Dimension::Extension => "EXTENSION",
         Dimension::File => "FILE",
         Dimension::Directory => "DIRECTORY",
@@ -65,10 +74,11 @@ async fn run(args: &Cli) -> anyhow::Result<String> {
             let source = vfs.describe();
             let report = count(vfs, &globs, &config).await?;
             let rows = render::finish(
-                render::rows(&report, dimension, args.depth),
+                render::rows(&report, dimension, args.depth, group),
                 args.sort,
                 args.top,
             );
+            let rows = arrange(args, rows);
             Ok(emit(args, &source, heading, &rows, false))
         }
 
@@ -87,12 +97,23 @@ async fn run(args: &Cli) -> anyhow::Result<String> {
             let after_report = count(after, &globs, &config).await?;
 
             let rows = render::finish(
-                render::diff_rows(&before_report, &after_report, dimension, args.depth),
+                render::diff_rows(&before_report, &after_report, dimension, args.depth, group),
                 args.sort,
                 args.top,
             );
+            let rows = arrange(args, rows);
             Ok(emit(args, &source, heading, &rows, true))
         }
+    }
+}
+
+/// Interleave family roll-ups into the rows, for the table only: CSV and JSON
+/// stay one row per language and carry the family as a field, so nothing
+/// downstream has to know to skip the roll-ups.
+fn arrange(args: &Cli, rows: Vec<render::Row>) -> Vec<render::Row> {
+    match args.format {
+        Format::Table => render::group_families(rows, args.sort),
+        _ => rows,
     }
 }
 
@@ -339,6 +360,29 @@ fn walk_config(args: &Cli) -> anyhow::Result<WalkConfig> {
         concurrency: args.jobs.max(1),
         only_paths: None,
     })
+}
+
+fn list_families() {
+    let registry = registry();
+    let mut families: Vec<(&str, Vec<&str>)> = registry
+        .families()
+        .iter()
+        .map(|f| {
+            let mut names: Vec<&str> = f
+                .languages
+                .iter()
+                .map(|id| registry.get(*id).name.as_str())
+                .collect();
+            names.sort();
+            (f.name.as_str(), names)
+        })
+        .collect();
+    families.sort();
+    let width = families.iter().map(|f| f.0.len()).max().unwrap_or(0);
+    println!("{:<width$}  LANGUAGES", "FAMILY");
+    for (name, languages) in families {
+        println!("{name:<width$}  {}", languages.join(", "));
+    }
 }
 
 fn list_languages() {

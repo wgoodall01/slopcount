@@ -1,9 +1,10 @@
 //! Language definitions.
 //!
-//! The data comes from two embedded JSON files: tokei's `languages.json` (the
-//! upstream syntax database) and our `languages_extra.json`, which is
+//! The data comes from three embedded JSON files: tokei's `languages.json` (the
+//! upstream syntax database); our `languages_extra.json`, which is
 //! deep-object-merged on top of it and carries the extra dimensions slopcount
-//! adds — chiefly, how to recognise test code.
+//! adds — chiefly, how to recognise test code; and `families.json`, which
+//! groups related languages so they can be reported together.
 //!
 //! Unlike tokei we interpret the database at runtime instead of generating code
 //! from it. Counting is disk-IO-bound in practice, and the registry is built
@@ -19,10 +20,28 @@ use serde_json::{Map, Value};
 
 const LANGUAGES_JSON: &str = include_str!("../data/languages.json");
 const LANGUAGES_EXTRA_JSON: &str = include_str!("../data/languages_extra.json");
+const FAMILIES_JSON: &str = include_str!("../data/families.json");
+
+/// The family a language falls into when `families.json` does not claim it.
+pub const OTHER_FAMILY: &str = "Other";
 
 /// An index into [`Registry::languages`]. Cheap to copy, compare and hash.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct LanguageId(pub u16);
+
+/// An index into [`Registry::families`]. Cheap to copy, compare and hash.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct FamilyId(pub u16);
+
+/// A group of related languages, counted together in reports.
+#[derive(Debug)]
+pub struct FamilyDef {
+    pub id: FamilyId,
+    /// The name as it appears in the report, e.g. `JavaScript`.
+    pub name: String,
+    /// The languages that belong to the family.
+    pub languages: Vec<LanguageId>,
+}
 
 /// How a test block opened by a marker is delimited.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -42,6 +61,8 @@ pub struct LanguageDef {
     pub key: String,
     /// The human-facing name, e.g. `C++`.
     pub name: String,
+    /// The family this language was grouped into, if any.
+    pub family: Option<FamilyId>,
 
     pub line_comments: Vec<String>,
     pub multi_line_comments: Vec<(String, String)>,
@@ -83,6 +104,7 @@ impl LanguageDef {
 #[derive(Debug)]
 pub struct Registry {
     languages: Vec<LanguageDef>,
+    families: Vec<FamilyDef>,
     by_extension: HashMap<String, LanguageId>,
     by_filename: HashMap<String, LanguageId>,
     by_key: HashMap<String, LanguageId>,
@@ -96,7 +118,7 @@ pub struct Registry {
 pub fn registry() -> &'static Registry {
     static REGISTRY: OnceLock<Registry> = OnceLock::new();
     REGISTRY.get_or_init(|| {
-        Registry::from_json(LANGUAGES_JSON, LANGUAGES_EXTRA_JSON)
+        Registry::from_json(LANGUAGES_JSON, LANGUAGES_EXTRA_JSON, FAMILIES_JSON)
             .expect("embedded language definitions are valid")
     })
 }
@@ -108,6 +130,39 @@ impl Registry {
 
     pub fn get(&self, id: LanguageId) -> &LanguageDef {
         &self.languages[id.0 as usize]
+    }
+
+    pub fn families(&self) -> &[FamilyDef] {
+        &self.families
+    }
+
+    pub fn family(&self, id: FamilyId) -> &FamilyDef {
+        &self.families[id.0 as usize]
+    }
+
+    /// The family `id` belongs to, or `None` when no family claims it.
+    pub fn family_of(&self, id: LanguageId) -> Option<&FamilyDef> {
+        self.get(id).family.map(|f| self.family(f))
+    }
+
+    /// The name of the family `id` belongs to, falling back to
+    /// [`OTHER_FAMILY`]. `None` — a file of unknown language — lands there too.
+    ///
+    /// Takes `&'static self` because the only registry anyone has is the
+    /// process-wide one, and the report wants a `&'static str` back.
+    pub fn family_name(&'static self, id: Option<LanguageId>) -> &'static str {
+        id.and_then(|id| self.family_of(id))
+            .map(|f| f.name.as_str())
+            .unwrap_or(OTHER_FAMILY)
+    }
+
+    /// Resolve a family by name, case-insensitively.
+    pub fn resolve_family(&self, needle: &str) -> Option<FamilyId> {
+        let needle = needle.to_ascii_lowercase();
+        self.families
+            .iter()
+            .find(|f| f.name.to_ascii_lowercase() == needle)
+            .map(|f| f.id)
     }
 
     pub fn by_key(&self, key: &str) -> Option<LanguageId> {
@@ -184,9 +239,10 @@ impl Registry {
 
     /// Build a registry by deep-merging `extra` over `base` and interpreting the
     /// result. Exposed for tests; production code uses [`registry`].
-    pub fn from_json(base: &str, extra: &str) -> anyhow::Result<Self> {
+    pub fn from_json(base: &str, extra: &str, families: &str) -> anyhow::Result<Self> {
         let base: Value = serde_json::from_str(base)?;
         let extra: Value = serde_json::from_str(extra)?;
+        let families: Value = serde_json::from_str(families)?;
 
         let mut merged = base
             .get("languages")
@@ -227,8 +283,11 @@ impl Registry {
         // Longest suffix first, so `.blade.php` beats `.php`.
         path_suffixes.sort_by_key(|(suffix, _)| std::cmp::Reverse(suffix.len()));
 
+        let families = build_families(&families, &by_key, &mut languages)?;
+
         Ok(Self {
             languages,
+            families,
             by_extension,
             by_filename,
             by_key,
@@ -278,6 +337,8 @@ impl LanguageDef {
             id,
             key: key.to_string(),
             name,
+            // Filled in by `Registry::from_json`, which owns the families.
+            family: None,
             line_comments: {
                 let mut c = strings(v.get("line_comment"));
                 c.sort_by_key(|c| std::cmp::Reverse(c.len()));
@@ -304,6 +365,46 @@ impl LanguageDef {
             },
         })
     }
+}
+
+/// Interpret `families.json` and stamp each language with the family that
+/// claims it. A language may belong to at most one family, and every key named
+/// has to exist, so a typo in the data file fails loudly instead of silently
+/// dropping a language out of its group.
+fn build_families(
+    v: &Value,
+    by_key: &HashMap<String, LanguageId>,
+    languages: &mut [LanguageDef],
+) -> anyhow::Result<Vec<FamilyDef>> {
+    let Some(families) = v.get("families").and_then(Value::as_object) else {
+        return Ok(Vec::new());
+    };
+
+    let mut out = Vec::with_capacity(families.len());
+    for (index, (name, def)) in families.iter().enumerate() {
+        let id = FamilyId(u16::try_from(index)?);
+        let mut members = Vec::new();
+        for key in strings(def.get("languages")) {
+            let language = *by_key
+                .get(key.as_str())
+                .ok_or_else(|| anyhow::anyhow!("family {name:?} names unknown language {key:?}"))?;
+            let slot = &mut languages[language.0 as usize].family;
+            if let Some(existing) = *slot {
+                anyhow::bail!(
+                    "language {key:?} is in two families: {:?} and {name:?}",
+                    families.keys().nth(existing.0 as usize).map(String::as_str),
+                );
+            }
+            *slot = Some(id);
+            members.push(language);
+        }
+        out.push(FamilyDef {
+            id,
+            name: name.clone(),
+            languages: members,
+        });
+    }
+    Ok(out)
 }
 
 /// Recursively merge `overlay` into `base`. Objects merge key-by-key; every
@@ -402,6 +503,50 @@ mod tests {
     fn the_embedded_definitions_build() {
         let reg = registry();
         assert!(reg.languages().len() > 300, "got {}", reg.languages().len());
+    }
+
+    #[test]
+    fn languages_are_stamped_with_their_family() {
+        let reg = registry();
+        let tsx = reg.by_key("Tsx").unwrap();
+        assert_eq!(
+            reg.family_of(tsx).map(|f| f.name.as_str()),
+            Some("JavaScript")
+        );
+        assert_eq!(reg.family_name(Some(tsx)), "JavaScript");
+        assert_eq!(reg.family_name(None), OTHER_FAMILY);
+        assert_eq!(
+            reg.resolve_family("javascript"),
+            Some(reg.get(tsx).family.unwrap())
+        );
+    }
+
+    #[test]
+    fn a_family_lists_its_members() {
+        let reg = registry();
+        let family = reg.family(reg.resolve_family("Systems").unwrap());
+        assert!(family.languages.contains(&reg.by_key("Rust").unwrap()));
+        assert!(family
+            .languages
+            .iter()
+            .all(|id| reg.family_of(*id).is_some_and(|f| f.id == family.id)));
+    }
+
+    #[test]
+    fn a_family_naming_an_unknown_language_is_an_error() {
+        let families = r#"{"families": {"Nope": {"languages": ["NotALanguage"]}}}"#;
+        let err = Registry::from_json(LANGUAGES_JSON, LANGUAGES_EXTRA_JSON, families)
+            .expect_err("unknown language should fail");
+        assert!(err.to_string().contains("NotALanguage"), "{err}");
+    }
+
+    #[test]
+    fn a_language_cannot_be_in_two_families() {
+        let families =
+            r#"{"families": {"A": {"languages": ["Rust"]}, "B": {"languages": ["Rust"]}}}"#;
+        let err = Registry::from_json(LANGUAGES_JSON, LANGUAGES_EXTRA_JSON, families)
+            .expect_err("a duplicate should fail");
+        assert!(err.to_string().contains("two families"), "{err}");
     }
 
     #[test]

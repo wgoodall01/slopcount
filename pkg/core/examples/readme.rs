@@ -34,6 +34,11 @@ async fn break_it_down(path: &std::path::Path) -> anyhow::Result<()> {
         );
     }
 
+    // Or roll languages up into their families: JavaScript, Documentation, ...
+    for (family, stats) in report.by_family() {
+        println!("{family:<14} {:>6} code", stats.total().code);
+    }
+
     // Or group by anything you like.
     let by_test_file = report.group_by(|file| file.is_test_file);
     println!("{:?}", by_test_file.get(&true).map(|s| s.total().code));

@@ -8,7 +8,7 @@ pub mod vfs;
 pub mod walk;
 
 pub use count::{count, CountConfig, CountOutcome};
-pub use lang::{registry, LanguageId, Registry};
+pub use lang::{registry, FamilyId, LanguageId, Registry, OTHER_FAMILY};
 pub use report::{diff_by, Counts, FileReport, Report, SignedStats, Stats};
 pub use vfs::{DirVfs, EmptyVfs, Entry, GitVfs, IgnoreConfig, IgnoreRules, IgnoreVfs, Vfs};
 pub use walk::{changed_paths, walk, walk_detailed, walk_shared, Globs, WalkConfig};

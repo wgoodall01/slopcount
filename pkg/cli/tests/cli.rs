@@ -93,7 +93,7 @@ fn the_table_output_names_its_columns_and_totals() {
     let dir = tree(&[("src/lib.rs", LIB_RS)]);
     let table = run(&[dir.path().to_str().unwrap()]);
     for expected in [
-        "LANGUAGE", "CODE", "COMMENT", "BLANK", "TEST", "TOTAL", "Rust",
+        "LANGUAGE", "CODE", "DOC", "TEST", "TOTAL", "DOC%", "TEST%", "Rust",
     ] {
         assert!(
             table.contains(expected),
@@ -110,9 +110,101 @@ fn csv_output_has_a_header_and_a_total_row() {
     let mut lines = csv.lines();
     assert_eq!(
         lines.next().unwrap(),
-        "language,files,code,comments,blanks,total,test_code,test_comments,test_blanks"
+        "family,language,files,code,comments,blanks,total,test_code,test_comments,test_blanks"
     );
-    assert!(csv.lines().any(|l| l.starts_with("TOTAL,")));
+    assert!(csv.lines().any(|l| l.starts_with("Systems,Rust,")));
+    assert!(csv.lines().any(|l| l.starts_with(",TOTAL,")));
+}
+
+// -- families ----------------------------------------------------------------
+
+#[test]
+fn the_table_groups_languages_under_their_family() {
+    let dir = tree(&[
+        ("src/lib.rs", LIB_RS),
+        ("web/app.ts", "export const a = 1;\n"),
+        ("web/app.tsx", "export const b = 1;\n"),
+    ]);
+    let table = run(&[dir.path().to_str().unwrap()]);
+
+    for expected in ["LANGUAGE", "JavaScript", "Systems", "├─  ", "└─  "] {
+        assert!(
+            table.contains(expected),
+            "missing {expected:?} in:\n{table}"
+        );
+    }
+    // The family roll-up comes before the languages it covers.
+    let family = table.find("JavaScript").unwrap();
+    assert!(family < table.find("TypeScript").unwrap());
+    assert!(family < table.find("TSX").unwrap());
+}
+
+#[test]
+fn families_can_be_turned_off() {
+    let dir = tree(&[("web/app.ts", "export const a = 1;\n")]);
+    let table = run(&[dir.path().to_str().unwrap(), "--no-families"]);
+    assert!(
+        !table.contains("├─") && !table.contains("└─"),
+        "still grouped:\n{table}"
+    );
+    assert!(table.contains("TypeScript"));
+}
+
+#[test]
+fn a_family_row_sums_the_languages_in_it() {
+    let dir = tree(&[
+        ("a.ts", "export const a = 1;\n"),
+        ("b.tsx", "export const b = 1;\n"),
+        ("c.rs", "fn c() {}\n"),
+    ]);
+    let out = json(&[
+        dir.path().to_str().unwrap(),
+        "--format",
+        "json",
+        "--by",
+        "family",
+    ]);
+    assert_eq!(row(&out, "JavaScript")["code"], 2);
+    assert_eq!(row(&out, "JavaScript")["files"], 2);
+    assert_eq!(row(&out, "Systems")["code"], 1);
+}
+
+#[test]
+fn json_rows_carry_the_family_of_each_language() {
+    let dir = tree(&[("a.tsx", "export const a = 1;\n")]);
+    let out = json(&[dir.path().to_str().unwrap(), "--format", "json"]);
+    assert_eq!(row(&out, "TSX")["family"], "JavaScript");
+}
+
+#[test]
+fn a_language_no_family_claims_lands_in_other() {
+    // Hex0 is not in families.json.
+    let dir = tree(&[("a.hex0", "00\n")]);
+    let out = json(&[dir.path().to_str().unwrap(), "--format", "json"]);
+    assert_eq!(row(&out, "Hex0")["family"], "Other");
+}
+
+#[test]
+fn listing_families_names_their_languages() {
+    let out = run(&["--list-families"]);
+    assert!(out.contains("FAMILY"));
+    let line = out
+        .lines()
+        .find(|l| l.starts_with("JavaScript"))
+        .expect("a JavaScript family");
+    for language in ["TypeScript", "TSX", "JSX"] {
+        assert!(line.contains(language), "missing {language:?} in {line:?}");
+    }
+}
+
+#[test]
+fn color_is_off_unless_asked_for() {
+    let dir = tree(&[("a.rs", "fn a() {}\n")]);
+    let path = dir.path().to_str().unwrap();
+    // Output is a pipe here, so `auto` means no escapes.
+    assert!(!run(&[path]).contains('\x1b'));
+    assert!(run(&[path, "--color", "always"]).contains('\x1b'));
+    assert!(!run(&[path, "--color", "never"]).contains('\x1b'));
 }
 
 // -- dimensions and filters --------------------------------------------------

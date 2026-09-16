@@ -102,6 +102,10 @@ pub struct Cli {
     #[arg(long, value_enum, default_value_t = Dimension::Language)]
     pub by: Dimension,
 
+    /// Do not group languages into families; one flat row per language.
+    #[arg(long)]
+    pub no_families: bool,
+
     /// Shorthand for `--by file`.
     #[arg(long, conflicts_with = "by")]
     pub files: bool,
@@ -122,15 +126,25 @@ pub struct Cli {
     #[arg(long, value_enum, default_value_t = Format::Table)]
     pub format: Format,
 
+    /// When to colour the table.
+    #[arg(long, value_enum, default_value_t = Color::Auto)]
+    pub color: Color,
+
     /// List every language slopcount knows about, and exit.
     #[arg(long)]
     pub list_languages: bool,
+
+    /// List every family and the languages in it, and exit.
+    #[arg(long)]
+    pub list_families: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum Dimension {
-    /// One row per language.
+    /// One row per language, grouped into families.
     Language,
+    /// One row per family, with the languages in it rolled up.
+    Family,
     /// One row per file extension.
     Extension,
     /// One row per file.
@@ -156,6 +170,14 @@ pub enum Sort {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum Color {
+    /// Colour when stdout is a terminal.
+    Auto,
+    Always,
+    Never,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum Format {
     /// A human-readable table.
     Table,
@@ -172,6 +194,25 @@ impl Cli {
             Dimension::File
         } else {
             self.by
+        }
+    }
+
+    /// Whether the table groups languages into families. Only the language
+    /// dimension has families to group by.
+    pub fn group_families(&self) -> bool {
+        !self.no_families && self.dimension() == Dimension::Language
+    }
+
+    /// Whether to emit ANSI escapes, honouring `NO_COLOR` for `--color auto`.
+    pub fn color(&self) -> bool {
+        use std::io::IsTerminal;
+        match self.color {
+            Color::Always => true,
+            Color::Never => false,
+            Color::Auto => {
+                std::io::stdout().is_terminal()
+                    && std::env::var_os("NO_COLOR").is_none_or(|v| v.is_empty())
+            }
         }
     }
 

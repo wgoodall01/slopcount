@@ -6,14 +6,15 @@ comment / blank** — and, crucially, by whether the lines are **tests**.
 ```
 $ slopcount
 slopcount  origin/main → .  (net change)
-─────────────────────────────────────────────────────────
-LANGUAGE  FILES  CODE  COMMENT  BLANK  TOTAL  TEST  TEST%
-─────────────────────────────────────────────────────────
-Rust          0   +15        0     +4    +19   +12    80%
-─────────────────────────────────────────────────────────
-TOTAL         0   +15        0     +4    +19   +12    80%
-─────────────────────────────────────────────────────────
-+19 lines changed: +15 code, of which +12 (80%) is test · 0 comment (0% of all lines)
+────────────────────────────────────────────────────
+LANGUAGE  FILES  CODE  DOC  TEST  TOTAL  DOC%  TEST%
+────────────────────────────────────────────────────
+Systems       0   +15    0   +12    +19    0%    80%
+└─  Rust      0   +15    0   +12    +19    0%    80%
+────────────────────────────────────────────────────
+TOTAL         0   +15    0   +12    +19    0%    80%
+────────────────────────────────────────────────────
++19 lines changed: +15 code, of which +12 (80%) is test · 0 documentation (0% of all lines)
 ```
 
 Eighty percent of that branch was tests.
@@ -82,7 +83,8 @@ a repository, the no-argument form just counts the current directory.
 | --- | --- |
 | `--in PATH` | narrow every source to this subdirectory |
 | `-C DIR` | resolve paths and revisions as if started in `DIR` |
-| `--by language\|extension\|file\|directory` | what to break the report down by |
+| `--by language\|family\|extension\|file\|directory` | what to break the report down by |
+| `--no-families` | one flat row per language, no family grouping |
 | `--files` | shorthand for `--by file` |
 | `--depth N` | directory depth to roll up to, with `--by directory` |
 | `--sort code\|comments\|blanks\|test\|lines\|name` | sort rows by a column |
@@ -96,24 +98,74 @@ a repository, the no-argument form just counts the current directory.
 | `--include-unknown` | count files whose language isn't recognised |
 | `--max-file-size BYTES` | skip large files (default 2 MiB; `0` lifts it) |
 | `-j N` | count this many files concurrently |
+| `--color auto\|always\|never` | ANSI colour in the table (auto: only on a terminal) |
 | `--list-languages` | every known language, and whether it detects tests |
+| `--list-families` | every family, and the languages in it |
 
 ### Reading the output
 
-`CODE`, `COMMENT` and `BLANK` are totals; `TEST` is the subset of `CODE` that is
-test code, and `TEST%` is that share. So in the header example, 15 code lines
-changed and 12 of them were tests.
+`CODE` and `DOC` are totals — `DOC` being comment lines, documentation in the
+sense that matters here. `TEST` is the subset of `CODE` that is test code and
+`TEST%` is that share, so in the header example 15 code lines changed and 12 of
+them were tests. `DOC%` is documentation as a share of every line counted.
 
-In a diff, `TEST%` shows `—` when it would not mean anything: if a change
+`TOTAL` is every line, blanks included; blanks have no column of their own, so
+`CODE` and `DOC` do not add up to it. `--format csv` and `--format json` still
+carry the blank counts, and `--sort blanks` still sorts on them.
+
+In a diff, a percentage shows `—` when it would not mean anything: if a change
 deletes production code and adds tests, the *net* code change is a denominator
 the test count can exceed, and "125%" would read as a bug rather than as
-information. `CODE` and `TEST` still show what actually happened.
+information. `CODE`, `DOC` and `TEST` still show what actually happened.
 
 `--in` applies *inside* each ref, so both sides are rebased to the same root and
 line up — a change to `src/lib.rs` shows as one net change, not an add and a
 delete. A subdirectory present on one side but not the other counts as empty
 there, so adding or removing a directory reads as added or removed lines; one
 missing from *both* sides is an error, since that is almost always a typo.
+
+### Families
+
+Languages come grouped into **families**: TypeScript, TSX, JSX and JavaScript
+are all `JavaScript`; Markdown and reStructuredText are `Documentation`; JSON,
+YAML and TOML are `Configuration`. The family is the number you usually want —
+"how much frontend did this branch add" is rarely a question about `.tsx` files
+specifically.
+
+```
+$ slopcount web-app
+slopcount  web-app
+──────────────────────────────────────────────────────────
+LANGUAGE        FILES  CODE  DOC  TEST  TOTAL  DOC%  TEST%
+──────────────────────────────────────────────────────────
+Configuration       2     3    0     0      3    0%     0%
+├─  YAML            1     2    0     0      2    0%     0%
+└─  JSON            1     1    0     0      1    0%     0%
+JavaScript          3     3    0     0      3    0%     0%
+├─  JavaScript      1     1    0     0      1    0%     0%
+├─  TSX             1     1    0     0      1    0%     0%
+└─  TypeScript      1     1    0     0      1    0%     0%
+Systems             1     1    1     0      2   50%     0%
+└─  Rust            1     1    1     0      2   50%     0%
+Documentation       1     0    2     0      3   67%      —
+└─  Markdown        1     0    2     0      3   67%      —
+──────────────────────────────────────────────────────────
+TOTAL               7     7    3     0     11   27%     0%
+──────────────────────────────────────────────────────────
+11 lines counted: 7 code, of which 0 (0%) is test · 3 documentation (27% of all lines)
+```
+
+The flush-left row is the family, and it is the sum of the languages indented
+beneath it; families are ordered by the same column the rows are sorted on. `--by family` drops the per-language
+rows and reports families alone, and `--no-families` goes the other way, back to
+one flat row per language. A language no family claims reports as `Other`.
+
+The definitions live in
+[`pkg/core/data/families.json`](pkg/core/data/families.json) — a family name and
+the language *keys* from `languages.json` that belong to it. A language may be
+in at most one family, and naming one that does not exist is an error rather
+than a silent miss. `slopcount --list-families` prints what is currently
+defined.
 
 ### Ignore files
 
@@ -137,6 +189,11 @@ TOTAL,1,18,0,4,22,12,0,2
 `--format json` emits one object with a `rows` array and a `total`, each row
 carrying `code`/`comments`/`blanks` totals plus separate `prod` and `test`
 breakdowns, and a top-level `diff` flag.
+
+JSON and CSV stay one row per language: the family rides along as a `family`
+field (JSON) or a leading `family` column (CSV) rather than as a roll-up row, so
+nothing downstream has to know to skip a subtotal. The tree is a table-only
+affair, as is colour — both are off when output is not a terminal.
 
 ## How tests are detected
 
@@ -200,7 +257,8 @@ for (language, stats) in report.by_language() {
 let by_test_file = report.group_by(|file| file.is_test_file);
 ```
 
-There is also `by_extension()`, `by_path()` and `by_directory(depth)`.
+There is also `by_family()`, `by_extension()`, `by_path()` and
+`by_directory(depth)`.
 `Report::merge` is a concatenation of per-file results, so folding thousands of
 them together is linear, and `Report` implements `FromIterator` and `Extend`
 over both `FileReport` and `Report` — results collect straight out of a stream:
@@ -357,7 +415,7 @@ TypeScript or Rust, which is 30% of Chromium.
 
 ```
 pkg/core   slopcount_core — the library
-  lang     the language database: tokei's, merged with ours
+  lang     the language database: tokei's, merged with ours, plus families
   count    the line classifier, streaming over an AsyncRead
   report   Report / Stats, and the dimensions you can slice them by
   vfs      DirVfs, GitVfs, IgnoreVfs, EmptyVfs

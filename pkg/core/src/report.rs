@@ -131,6 +131,12 @@ pub struct FileReport {
 }
 
 impl FileReport {
+    /// The name of the family the file's language belongs to, e.g. `JavaScript`
+    /// for a `.tsx` file. Languages no family claims report `Other`.
+    pub fn family_name(&self) -> &'static str {
+        registry().family_name(self.language)
+    }
+
     pub fn language_name(&self) -> &'static str {
         match self.language {
             Some(id) => registry().get(id).name.as_str(),
@@ -222,6 +228,10 @@ impl Report {
 
     pub fn by_language(&self) -> BTreeMap<&'static str, Stats> {
         self.group_by(FileReport::language_name)
+    }
+
+    pub fn by_family(&self) -> BTreeMap<&'static str, Stats> {
+        self.group_by(FileReport::family_name)
     }
 
     pub fn by_extension(&self) -> BTreeMap<String, Stats> {
@@ -611,6 +621,31 @@ mod tests {
         };
         assert_eq!(report.files[0].language_name(), "Unknown");
         assert!(report.by_language().contains_key("Unknown"));
+    }
+
+    #[test]
+    fn grouping_by_family_rolls_related_languages_together() {
+        let by_family = sample().by_family();
+        // Rust is in Systems; TypeScript is in the JavaScript family.
+        assert_eq!(by_family["Systems"].total(), counts(67, 11, 12));
+        assert_eq!(by_family["JavaScript"].total(), counts(40, 1, 2));
+    }
+
+    #[test]
+    fn a_language_no_family_claims_falls_under_other() {
+        let report = Report {
+            files: vec![FileReport {
+                path: PathBuf::from("a.wat"),
+                language: None,
+                is_test_file: false,
+                stats: Stats {
+                    prod: counts(1, 0, 0),
+                    test: Counts::default(),
+                },
+            }],
+        };
+        assert_eq!(report.files[0].family_name(), "Other");
+        assert_eq!(report.by_family()["Other"].prod.code, 1);
     }
 
     #[test]

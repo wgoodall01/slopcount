@@ -37,11 +37,39 @@ vs. blanks, very fast and very accurately, but it has no notion of a test. The
 code/comment/blank classifier here is a re-implementation of tokei's, and the
 language database is tokei's; see [Accuracy](#accuracy) below.
 
-## Install
+## Installation
+
+Every tagged release publishes prebuilt `slopcount` binaries for macOS
+(aarch64), Linux (x86_64, aarch64) and Windows (x86_64, aarch64).
+
+**With [`cargo binstall`](https://github.com/cargo-bins/cargo-binstall)** —
+downloads the prebuilt binary for your platform, no compiler needed:
 
 ```sh
-cargo install --path pkg/cli
+cargo binstall --git https://github.com/wgoodall01/slopcount slopcount_cli
 ```
+
+**With `cargo install`** — builds from source:
+
+```sh
+cargo install --git https://github.com/wgoodall01/slopcount slopcount_cli
+```
+
+**From the release page** — grab the archive for your platform from
+[the latest release](https://github.com/wgoodall01/slopcount/releases/latest),
+unpack it, and drop `slopcount` somewhere on your `PATH`:
+
+```sh
+curl -fsSL -o slopcount.tar.gz \
+  https://github.com/wgoodall01/slopcount/releases/latest/download/slopcount-aarch64-apple-darwin.tar.gz
+tar xzf slopcount.tar.gz
+install -m755 slopcount-aarch64-apple-darwin/slopcount ~/.local/bin/slopcount
+```
+
+Swap the target triple for `x86_64-unknown-linux-musl`,
+`aarch64-unknown-linux-musl`, `x86_64-pc-windows-msvc` or
+`aarch64-pc-windows-msvc` as needed; the Windows archives are `.zip`. Each
+release also carries a `SHA256SUMS` file.
 
 Or run it out of the workspace with `cargo run --release -- <args>`.
 
@@ -438,6 +466,12 @@ of a dependency.
 cargo build --release
 cargo test
 ```
+
+`make check` runs the same gate CI does (clippy, tests, `cargo fmt --check`).
+`make release` bumps the version with
+[`cargo-release`](https://github.com/crate-ci/cargo-release), commits and tags
+it, then prints the `git push` that cuts the GitHub release. `LEVEL=minor make
+release` bumps a minor version instead of a patch.
 
 ## Licence
 

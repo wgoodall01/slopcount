@@ -6,6 +6,7 @@ resolver = "3"
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
+repository = "https://github.com/wgoodall01/slopcount"
 
 # Every third-party version lives here, so the two crates can never drift onto
 # different copies of the same dependency. Members opt in with

@@ -1,0 +1,22 @@
+# cargo-release configuration. `make release` drives this.
+#
+# The two workspace crates share one version, so a release is a single commit
+# plus a single `vX.Y.Z` tag; pushing that tag is what fires
+# .github/workflows/release.yml.
+
+# Both crates move together and only one tag is cut, on the workspace root.
+shared-version = true
+consolidate-commits = true
+tag-name = "v{{version}}"
+tag-message = "slopcount {{version}}"
+pre-release-commit-message = "Release {{version}}"
+
+# Nothing is on crates.io yet, and the tag is pushed by hand (see the Makefile)
+# so the release is never a surprise.
+publish = false
+push = false
+
+# Releases are cut from main, with a clean tree.
+allow-branch = ["main"]
+sign-commit = false
+sign-tag = false

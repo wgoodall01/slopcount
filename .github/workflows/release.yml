@@ -1,0 +1,96 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-24.04-arm
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+          - target: aarch64-pc-windows-msvc
+            os: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Install musl tools
+        if: endsWith(matrix.target, '-musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }} --package slopcount_cli
+
+      # The archive holds a single `slopcount-<target>/` directory, which is
+      # what `[package.metadata.binstall]` in pkg/cli/Cargo.toml tells
+      # cargo-binstall to look for.
+      - name: Package (unix)
+        if: "!contains(matrix.target, 'windows')"
+        shell: bash
+        run: |
+          dir="slopcount-${{ matrix.target }}"
+          mkdir "$dir"
+          cp "target/${{ matrix.target }}/release/slopcount" "$dir/"
+          cp README.md "$dir/"
+          tar czf "$dir.tar.gz" "$dir"
+
+      - name: Package (windows)
+        if: contains(matrix.target, 'windows')
+        shell: bash
+        run: |
+          dir="slopcount-${{ matrix.target }}"
+          mkdir "$dir"
+          cp "target/${{ matrix.target }}/release/slopcount.exe" "$dir/"
+          cp README.md "$dir/"
+          7z a "$dir.zip" "$dir"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: slopcount-${{ matrix.target }}
+          path: |
+            slopcount-*.tar.gz
+            slopcount-*.zip
+          if-no-files-found: error
+
+  release:
+    name: publish release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true

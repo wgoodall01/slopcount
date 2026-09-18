@@ -12,8 +12,8 @@ use anyhow::Context;
 use clap::Parser;
 use slopcount_core::count::CountConfig;
 use slopcount_core::{
-    changed_paths, registry, walk_shared, DirVfs, EmptyVfs, GitVfs, Globs, IgnoreConfig,
-    IgnoreRules, IgnoreVfs, Report, Vfs, WalkConfig,
+    changed_paths, merge_base_label, registry, walk_shared, DirVfs, EmptyVfs, GitVfs, Globs,
+    IgnoreConfig, IgnoreRules, IgnoreVfs, Report, Vfs, WalkConfig,
 };
 
 use cli::{Cli, Dimension, Format};
@@ -39,6 +39,15 @@ async fn main() -> anyhow::Result<()> {
     print!("{output}");
     Ok(())
 }
+
+/// The revision the working tree grew out of, as the second side of the
+/// default comparison.
+const HEAD: &str = "HEAD";
+
+/// Tacked onto every "could not resolve that" error: the revision being
+/// missing rather than mistyped is a common enough surprise to name.
+const NEVER_FETCHES: &str =
+    "(slopcount never fetches; the revision must already be in the local git database)";
 
 /// A resolved source, or `None` when `--in` named a subdirectory that source
 /// does not contain.
@@ -169,11 +178,14 @@ fn pair(
 /// the two sides of the header read alike.
 fn absent(args: &Cli, reference: &PathRef) -> Arc<dyn Vfs> {
     let subdir = args.subdir();
+    // A revision names its subdirectory with a colon, the way `describe` does.
+    let git = |revision: String| match &subdir {
+        Some(subdir) => format!("{revision}:{}", subdir.display()),
+        None => revision,
+    };
     let name = match reference {
-        PathRef::GitCommit(revision) => match &subdir {
-            Some(subdir) => format!("{revision}:{}", subdir.display()),
-            None => revision.clone(),
-        },
+        PathRef::GitCommitish(revision) => git(revision.clone()),
+        PathRef::GitMergeBase(one, two) => git(merge_base_label(one, two)),
         PathRef::Fs(path) => {
             let root = fs_root(args, path);
             match &subdir {
@@ -194,7 +206,14 @@ fn require(args: &Cli, reference: &PathRef, opened: MaybeSource) -> anyhow::Resu
     })
 }
 
-/// With no arguments: compare the repository against its default branch.
+/// With no arguments: compare the working tree against the default branch.
+///
+/// The baseline is the *merge base* rather than the branch tip, so whatever
+/// landed on the default branch since this branch left it does not read as
+/// though this branch had deleted it.
+///
+/// Sitting on the default branch with nothing uncommitted is the one case with
+/// no change to report; the tree is then simply counted.
 fn default_source(args: &Cli) -> anyhow::Result<Source> {
     let base = base_dir(args);
 
@@ -214,8 +233,30 @@ fn default_source(args: &Cli) -> anyhow::Result<Source> {
         return Ok(Source::Single(require(args, &after_ref, after)?));
     };
 
-    let before_ref = PathRef::GitCommit(branch.clone());
-    let before = git_source(args, &branch)?;
+    if repo::on_branch(&base, &branch) && !repo::is_dirty(&base) {
+        return Ok(Source::Single(require(args, &after_ref, after)?));
+    }
+
+    // An unborn HEAD, or an orphan branch such as `gh-pages`, has no commit in
+    // common with the default branch. There is no branch point to compare from
+    // then, so the branch itself is the only baseline left — and the
+    // no-argument form should still report something.
+    let (before_ref, before) = match merge_base_source(args, &branch, HEAD) {
+        Ok(before) => (
+            PathRef::GitMergeBase(branch.clone(), HEAD.to_string()),
+            before,
+        ),
+        Err(_) => {
+            eprintln!(
+                "slopcount: HEAD has no commit in common with {branch}; \
+                 comparing against {branch} itself"
+            );
+            (
+                PathRef::GitCommitish(branch.clone()),
+                git_source(args, &branch)?,
+            )
+        }
+    };
     pair(args, &before_ref, &after_ref, (before, after))
 }
 
@@ -232,7 +273,8 @@ fn open(args: &Cli, reference: &PathRef) -> anyhow::Result<MaybeSource> {
             }
             Ok(dir_source_in(args, &path))
         }
-        PathRef::GitCommit(revision) => git_source(args, revision),
+        PathRef::GitCommitish(revision) => git_source(args, revision),
+        PathRef::GitMergeBase(one, two) => merge_base_source(args, one, two),
     }
 }
 
@@ -312,24 +354,39 @@ fn git_source(args: &Cli, revision: &str) -> anyhow::Result<MaybeSource> {
     let opened = GitVfs::open_optional_subpath(&base, revision, args.subdir().as_deref())
         .with_context(|| {
             format!(
-                "reading git revision {revision:?} from {}\n\
-                 (slopcount never fetches; the revision must already be in the local git database)",
+                "reading git revision {revision:?} from {}\n{NEVER_FETCHES}",
                 base.display()
             )
         })?;
-    let Some(vfs) = opened else {
-        return Ok(None);
-    };
+    Ok(opened.map(|vfs| git_ignores(args, vfs)))
+}
 
-    // A git tree carries its ignore files inside it, so the rules have to be
-    // applied on top rather than during the walk. `.gitignore` is not among
-    // them: a file git tracks despite matching it was committed on purpose.
+/// The merge base of two revisions: what the second branched from, as far as
+/// the local object database can tell.
+fn merge_base_source(args: &Cli, one: &str, two: &str) -> anyhow::Result<MaybeSource> {
+    let base = base_dir(args);
+    let opened =
+        GitVfs::open_merge_base(&base, one, two, args.subdir().as_deref()).with_context(|| {
+            format!(
+                "finding the merge base of {one:?} and {two:?} in {}\n{NEVER_FETCHES}",
+                base.display()
+            )
+        })?;
+    Ok(opened.map(|vfs| git_ignores(args, vfs)))
+}
+
+/// Apply the ignore rules to a git tree.
+///
+/// A git tree carries its ignore files inside it, so the rules have to be
+/// applied on top rather than during the walk. `.gitignore` is not among
+/// them: a file git tracks despite matching it was committed on purpose.
+fn git_ignores(args: &Cli, vfs: GitVfs) -> Arc<dyn Vfs> {
     let mut rules = IgnoreRules::for_git_tree();
     rules.include_hidden = args.hidden;
     if args.no_ignore {
         rules.ignore_files.clear();
     }
-    Ok(Some(Arc::new(IgnoreVfs::new(vfs, rules))))
+    Arc::new(IgnoreVfs::new(vfs, rules))
 }
 
 fn walk_config(args: &Cli) -> anyhow::Result<WalkConfig> {

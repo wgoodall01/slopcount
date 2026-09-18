@@ -17,12 +17,27 @@ fn tidy(error: impl std::fmt::Display) -> String {
     }
 }
 
+/// The commit a revision names, peeling a tag or other commit-ish on the way.
+fn commit_id(repo: &gix::Repository, revision: &str) -> anyhow::Result<gix::ObjectId> {
+    let id = repo
+        .rev_parse_single(revision)
+        .map_err(|e| anyhow::anyhow!("could not resolve revision {revision:?}: {}", tidy(e)))?;
+    Ok(id.object()?.peel_to_commit()?.id)
+}
+
+/// How a merge base is named in a report, wherever one has to be described
+/// without opening it.
+pub fn merge_base_label(one: &str, two: &str) -> String {
+    format!("merge-base({one}, {two})")
+}
+
 /// A [`Vfs`] over one tree, optionally narrowed to a subdirectory of it.
 #[derive(Debug)]
 pub struct GitVfs {
     repo: ThreadSafeRepository,
-    /// The revision as the user wrote it, for `describe`.
-    revision: String,
+    /// How `describe` names this tree: the revision as the user wrote it, or
+    /// `merge-base(a, b)` for a merge base, whose commit id would say nothing.
+    label: String,
     /// The resolved tree object.
     tree_id: gix::ObjectId,
     /// Path within the tree that the VFS is rooted at, if any.
@@ -57,7 +72,42 @@ impl GitVfs {
         subpath: Option<&Path>,
     ) -> anyhow::Result<Option<Self>> {
         let repo = gix::discover(path.as_ref())?;
+        Self::at(repo, revision, revision, subpath)
+    }
 
+    /// As [`GitVfs::open_optional_subpath`], but over the merge base of two
+    /// commit-ish revisions: the commit they last had in common, which is what
+    /// a topic branch actually grew from.
+    ///
+    /// [`Vfs::describe`] reports `merge-base(one, two)`, since the commit id it
+    /// resolved to would say nothing about what was compared.
+    pub fn open_merge_base(
+        path: impl AsRef<Path>,
+        one: &str,
+        two: &str,
+        subpath: Option<&Path>,
+    ) -> anyhow::Result<Option<Self>> {
+        let repo = gix::discover(path.as_ref())?;
+        let base = repo
+            .merge_base(commit_id(&repo, one)?, commit_id(&repo, two)?)
+            .map_err(|e| anyhow::anyhow!("no merge base for {one:?} and {two:?}: {}", tidy(e)))?
+            .detach();
+        Self::at(
+            repo,
+            &base.to_string(),
+            &merge_base_label(one, two),
+            subpath,
+        )
+    }
+
+    /// Resolve `revision` in an already-open repository, naming the result
+    /// `label` in [`Vfs::describe`].
+    fn at(
+        repo: gix::Repository,
+        revision: &str,
+        label: &str,
+        subpath: Option<&Path>,
+    ) -> anyhow::Result<Option<Self>> {
         let mut tree = repo
             .rev_parse_single(revision)
             .map_err(|e| anyhow::anyhow!("could not resolve revision {revision:?}: {}", tidy(e)))?
@@ -82,7 +132,7 @@ impl GitVfs {
         Ok(Some(Self {
             tree_id,
             repo: repo.into_sync(),
-            revision: revision.to_string(),
+            label: label.to_string(),
             subpath: subpath.map(Path::to_path_buf),
         }))
     }
@@ -102,9 +152,9 @@ impl Vfs for GitVfs {
     fn describe(&self) -> String {
         match &self.subpath {
             Some(sub) if !sub.as_os_str().is_empty() => {
-                format!("{}:{}", self.revision, sub.display())
+                format!("{}:{}", self.label, sub.display())
             }
-            _ => self.revision.clone(),
+            _ => self.label.clone(),
         }
     }
 
@@ -372,6 +422,85 @@ mod tests {
         assert_eq!(whole.describe(), "HEAD");
         let sub = GitVfs::open(repo.path(), "HEAD", Some(Path::new("src"))).unwrap();
         assert_eq!(sub.describe(), "HEAD:src");
+    }
+
+    // -- merge bases ---------------------------------------------------------
+
+    /// `main` and `topic` share `first`, then both move on.
+    fn diverged() -> Repo {
+        let repo = Repo::init();
+        repo.write("a.rs", "shared\n");
+        repo.commit("first");
+        repo.git(&["checkout", "-q", "-b", "topic"]);
+        repo.write("topic.rs", "on the topic branch\n");
+        repo.commit("topic work");
+        repo.git(&["checkout", "-q", "main"]);
+        repo.write("main.rs", "on main\n");
+        repo.commit("main moves on");
+        repo
+    }
+
+    #[tokio::test]
+    async fn a_merge_base_is_the_tree_the_branches_last_shared() {
+        let repo = diverged();
+        let vfs = GitVfs::open_merge_base(repo.path(), "main", "topic", None)
+            .unwrap()
+            .expect("a merge base");
+        // Neither branch's later work is in it.
+        assert_eq!(paths(&vfs).await, set(&["a.rs"]));
+    }
+
+    #[tokio::test]
+    async fn a_merge_base_describes_itself_by_its_two_sides() {
+        let repo = diverged();
+        let whole = GitVfs::open_merge_base(repo.path(), "main", "topic", None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(whole.describe(), "merge-base(main, topic)");
+
+        let sub = GitVfs::open_merge_base(repo.path(), "main", "topic", Some(Path::new("src")));
+        // No `src` at the merge base: absent, not an error.
+        assert!(sub.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn a_merge_base_accepts_any_commit_ish() {
+        let repo = diverged();
+        repo.git(&["tag", "-a", "v1", "-m", "tagged", "topic"]);
+        let by_tag = GitVfs::open_merge_base(repo.path(), "HEAD", "v1", None)
+            .unwrap()
+            .unwrap();
+        let by_branch = GitVfs::open_merge_base(repo.path(), "main", "topic", None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(by_tag.tree_id(), by_branch.tree_id());
+    }
+
+    #[tokio::test]
+    async fn a_merge_base_of_unrelated_histories_is_an_error() {
+        let repo = diverged();
+        repo.git(&["checkout", "-q", "--orphan", "stranger"]);
+        repo.write("other.rs", "unrelated\n");
+        repo.commit("no shared history");
+
+        let err = GitVfs::open_merge_base(repo.path(), "main", "stranger", None).unwrap_err();
+        let message = err.to_string();
+        assert!(message.contains("merge base"), "unhelpful error: {message}");
+    }
+
+    #[tokio::test]
+    async fn an_unknown_side_of_a_merge_base_is_an_error() {
+        let repo = diverged();
+        let err = GitVfs::open_merge_base(repo.path(), "main", "no-such-ref", None).unwrap_err();
+        let message = err.to_string();
+        assert!(
+            message.contains("no-such-ref"),
+            "unhelpful error: {message}"
+        );
+        assert!(
+            !message.contains(".cargo/registry"),
+            "error leaks a gix source path: {message}"
+        );
     }
 
     // -- error paths ---------------------------------------------------------

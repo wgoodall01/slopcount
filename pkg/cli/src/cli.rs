@@ -8,25 +8,30 @@ use crate::path_ref::PathRef;
 
 /// Count lines of code, broken down by how much of it is tests.
 ///
-/// Takes up to two sources. Each is a directory, or a `git:` revision resolved
-/// against the local object database (slopcount never fetches).
+/// Takes up to two sources. Each is a directory, a `git:` revision, or the
+/// merge base of two revisions as `git-merge:a:b` — all resolved against the
+/// local object database (slopcount never fetches).
 ///
 /// With two sources it reports the net change from the first to the second;
 /// with one it reports that source's counts; with none it compares the
-/// repository's working tree against its default branch.
+/// repository's working tree against where it left the default branch — or
+/// just counts the tree, when that is where it already sits with nothing
+/// uncommitted.
 #[derive(Debug, Parser)]
 #[command(name = "slopcount", version, about, long_about = None)]
 #[command(after_help = "\
 EXAMPLES:
-  slopcount                                  what this branch changed, vs. the default branch
+  slopcount                                  what this branch changed, since it left the default branch
   slopcount .                                count the current directory
   slopcount git:origin/main .                changes in the working tree on top of origin/main
   slopcount dir1 dir2                        differences between two directories
   slopcount git:origin/main git:my-topic     changes on a topic branch
+  slopcount git-merge:origin/main:HEAD .     ...against where this branch left origin/main
   slopcount --in src git:origin/main .       ...restricted to one subdirectory
 ")]
 pub struct Cli {
-    /// What to count: a directory, or a `git:` revision.
+    /// What to count: a directory, a `git:` revision, or a `git-merge:a:b`
+    /// merge base.
     ///
     /// Given two, slopcount reports the change from the first to the second.
     #[arg(value_name = "REF", num_args = 0..=2)]
@@ -34,8 +39,8 @@ pub struct Cli {
 
     /// Run as if slopcount were started in this directory.
     ///
-    /// Relative paths resolve against it, and `git:` revisions are resolved in
-    /// the repository containing it.
+    /// Relative paths resolve against it, and revisions are resolved in the
+    /// repository containing it.
     #[arg(short = 'C', long, value_name = "DIR")]
     pub repo: Option<PathBuf>,
 

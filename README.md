@@ -75,8 +75,8 @@ Or run it out of the workspace with `cargo run --release -- <args>`.
 
 ## CLI usage
 
-slopcount takes up to two **refs**. A ref is either a path on disk or a
-`git:`-prefixed revision:
+slopcount takes up to two **refs**. A ref is a path on disk, a `git:`-prefixed
+revision, or the merge base of two revisions:
 
 | Ref | Means |
 | --- | --- |
@@ -84,26 +84,40 @@ slopcount takes up to two **refs**. A ref is either a path on disk or a
 | `git:origin/main` | a branch |
 | `git:fefefefe` | a commit |
 | `git:HEAD~2`, `git:v1.0` | anything `git rev-parse` accepts |
+| `git-merge:origin/main:HEAD` | where those two last agreed |
+
+A merge base is what a topic branch grew from, so
+`slopcount git-merge:origin/main:HEAD .` reports what the branch added, and
+ignores whatever landed on `origin/main` in the meantime. It reads as
+`merge-base(origin/main, HEAD)` in the report header.
 
 Give it **two** and it reports the net change from the first to the second;
 **one** and it reports that ref's counts; **none** and it compares your working
-tree against the repository's default branch.
+tree against the point where you left the default branch.
 
 ```sh
-slopcount                                # what this branch changed, vs. the default branch
+slopcount                                # what this branch changed, since it left the default branch
 slopcount .                              # count the current directory
 slopcount git:origin/main                # count a branch as it stands
 slopcount git:origin/main .              # changes in the working tree on top of origin/main
 slopcount dir1 dir2                      # differences between two directories
 slopcount git:origin/main git:my-topic   # changes on a topic branch
+slopcount git-merge:origin/main:HEAD .   # ...against where the branch left origin/main
 slopcount --in src git:origin/main .     # ...restricted to one subdirectory
 ```
 
 The default branch is resolved from refs already in the local git database:
 `origin/HEAD` when the clone has one (`git clone` writes it), otherwise
 `origin/main`, `origin/master`, `main`, `master` in that order. **slopcount
-never fetches** — every revision has to be one git already knows about. Outside
-a repository, the no-argument form just counts the current directory.
+never fetches** — every revision has to be one git already knows about.
+
+The baseline is the *merge base*, not the branch tip, so whatever landed on
+`origin/main` since you branched is not reported as though you had deleted it.
+Two cases skip the comparison: sitting on the default branch with nothing
+uncommitted just counts the tree, since there is no change to show, and being
+outside a repository just counts the current directory. Uncommitted means
+staged, unstaged **or** untracked — but never ignored, so build output does not
+make a tree look busy.
 
 ### Options
 
@@ -449,7 +463,7 @@ pkg/core   slopcount_core — the library
   vfs      DirVfs, GitVfs, IgnoreVfs, EmptyVfs
   walk     glue: list a VFS, filter, count concurrently, merge
 pkg/cli    slopcount_cli — the `slopcount` binary
-  path_ref parsing of `.` / `git:origin/main` into a source
+  path_ref parsing of `.` / `git:origin/main` / `git-merge:a:b` into a source
   repo     locating the repo and its default branch
   render   rows, tables, JSON and CSV
 scripts    benchmark.nu — the BENCHMARKS.md methodology, start to finish

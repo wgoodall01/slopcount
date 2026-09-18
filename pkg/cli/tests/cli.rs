@@ -610,7 +610,7 @@ fn with_no_arguments_it_compares_the_working_tree_to_the_default_branch() {
     assert_eq!(out["diff"], true);
     assert_eq!(
         out["source"],
-        format!("origin/main → {}", repo.path().display())
+        format!("merge-base(origin/main, HEAD) → {}", repo.path().display())
     );
     // One line committed on top, plus one uncommitted.
     assert_eq!(out["total"]["code"], 2);
@@ -629,7 +629,7 @@ fn the_default_branch_comes_from_origin_head_when_it_exists() {
         out["source"]
             .as_str()
             .unwrap()
-            .starts_with("origin/trunk →"),
+            .starts_with("merge-base(origin/trunk, HEAD) →"),
         "got {}",
         out["source"]
     );
@@ -641,13 +641,143 @@ fn the_default_branch_falls_back_to_a_local_branch() {
     let repo = Repo::init();
     repo.write("a.rs", "fn a() {}\n");
     repo.commit("first");
+    repo.write("a.rs", "fn a() {}\nfn b() {}\n");
 
     let out = json(&["-C", repo.path().to_str().unwrap(), "--format", "json"]);
     assert_eq!(out["diff"], true);
     assert!(
-        out["source"].as_str().unwrap().starts_with("main →"),
+        out["source"]
+            .as_str()
+            .unwrap()
+            .starts_with("merge-base(main, HEAD) →"),
         "got {}",
         out["source"]
+    );
+    assert_eq!(out["total"]["code"], 1);
+}
+
+#[test]
+fn on_the_default_branch_with_nothing_uncommitted_it_just_counts() {
+    let repo = Repo::init();
+    repo.write("a.rs", "fn a() {}\nfn b() {}\n");
+    repo.commit("first");
+    repo.set_origin_head("main");
+
+    // Nothing to compare against: the tree *is* the default branch.
+    let out = json(&["-C", repo.path().to_str().unwrap(), "--format", "json"]);
+    assert_eq!(out["diff"], false);
+    assert_eq!(out["source"], repo.path().display().to_string());
+    assert_eq!(out["total"]["code"], 2);
+}
+
+#[test]
+fn an_untracked_file_is_work_in_progress() {
+    let repo = Repo::init();
+    repo.write("a.rs", "fn a() {}\n");
+    repo.commit("first");
+    repo.set_origin_head("main");
+    repo.write("new.rs", "fn new() {}\n");
+
+    let out = json(&["-C", repo.path().to_str().unwrap(), "--format", "json"]);
+    assert_eq!(out["diff"], true);
+    assert_eq!(out["total"]["code"], 1);
+}
+
+#[test]
+fn an_ignored_file_does_not_make_the_tree_busy() {
+    let repo = Repo::init();
+    repo.write("a.rs", "fn a() {}\n");
+    repo.write(".gitignore", "built.rs\n");
+    repo.commit("first");
+    repo.set_origin_head("main");
+    repo.write("built.rs", "fn built() {}\n");
+
+    // Build output is not work in progress.
+    let out = json(&["-C", repo.path().to_str().unwrap(), "--format", "json"]);
+    assert_eq!(out["diff"], false);
+}
+
+#[test]
+fn a_staged_change_is_enough_to_compare() {
+    let repo = Repo::init();
+    repo.write("a.rs", "fn a() {}\n");
+    repo.commit("first");
+    repo.set_origin_head("main");
+    repo.write("a.rs", "fn a() {}\nfn b() {}\n");
+    repo.git(&["add", "-A"]);
+
+    let out = json(&["-C", repo.path().to_str().unwrap(), "--format", "json"]);
+    assert_eq!(out["diff"], true);
+    assert_eq!(out["total"]["code"], 1);
+}
+
+#[test]
+fn what_landed_on_the_default_branch_meanwhile_is_not_counted() {
+    let repo = Repo::init();
+    repo.write("a.rs", "fn a() {}\n");
+    repo.commit("first");
+    repo.set_origin_head("main");
+
+    repo.git(&["checkout", "-q", "-b", "topic"]);
+    repo.write("a.rs", "fn a() {}\nfn b() {}\n");
+    repo.commit("topic work");
+
+    // Two more lines land on the default branch after the branch point.
+    repo.git(&["checkout", "-q", "main"]);
+    repo.write("a.rs", "fn a() {}\nfn y() {}\nfn z() {}\n");
+    repo.commit("main moves on");
+    repo.git(&["update-ref", "refs/remotes/origin/main", "HEAD"]);
+    repo.git(&["checkout", "-q", "topic"]);
+
+    let out = json(&["-C", repo.path().to_str().unwrap(), "--format", "json"]);
+    assert_eq!(
+        out["source"],
+        format!("merge-base(origin/main, HEAD) → {}", repo.path().display())
+    );
+    // The one line the topic branch added, not two deletions of main's work.
+    assert_eq!(out["total"]["code"], 1);
+}
+
+#[test]
+fn a_detached_head_is_on_no_branch_and_so_is_compared() {
+    let repo = Repo::init();
+    repo.write("a.rs", "fn a() {}\n");
+    repo.commit("first");
+    repo.set_origin_head("main");
+    repo.git(&["checkout", "-q", "--detach"]);
+
+    let out = json(&["-C", repo.path().to_str().unwrap(), "--format", "json"]);
+    assert_eq!(out["diff"], true);
+    assert_eq!(out["total"]["code"], 0);
+}
+
+#[test]
+fn an_orphan_branch_falls_back_to_the_default_branch_itself() {
+    let repo = Repo::init();
+    repo.write("a.rs", "fn a() {}\n");
+    repo.commit("first");
+    repo.set_origin_head("main");
+
+    // No commit in common, so there is no branch point to compare from.
+    repo.git(&["checkout", "-q", "--orphan", "pages"]);
+    repo.git(&["rm", "-q", "-rf", "."]);
+    repo.write("b.rs", "fn b() {}\nfn c() {}\n");
+    repo.commit("unrelated history");
+
+    let out = bin()
+        .args(["-C", repo.path().to_str().unwrap(), "--format", "json"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("no commit in common"),
+        "unexplained fallback: {stderr}"
+    );
+    let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(
+        value["source"],
+        format!("origin/main → {}", repo.path().display())
     );
 }
 
@@ -752,6 +882,85 @@ fn two_revisions_of_different_branches_are_compared() {
     assert_eq!(row(&out, "Rust")["prod"]["code"], 0);
 }
 
+// -- merge bases -------------------------------------------------------------
+
+/// `main` and `topic` share one commit, then both move on: main by two lines,
+/// topic by one.
+fn diverged() -> Repo {
+    let repo = Repo::init();
+    repo.write("a.rs", "fn a() {}\n");
+    repo.commit("first");
+    repo.git(&["checkout", "-q", "-b", "topic"]);
+    repo.write("a.rs", "fn a() {}\nfn b() {}\n");
+    repo.commit("topic work");
+    repo.git(&["checkout", "-q", "main"]);
+    repo.write("a.rs", "fn a() {}\nfn c() {}\nfn d() {}\n");
+    repo.commit("main moves on");
+    repo
+}
+
+#[test]
+fn a_merge_base_ignores_what_landed_on_the_other_branch() {
+    let repo = diverged();
+
+    let out = json(&[
+        "-C",
+        repo.path().to_str().unwrap(),
+        "git-merge:main:topic",
+        "git:topic",
+        "--format",
+        "json",
+    ]);
+    // The one line the topic branch added; main's two are not in the diff.
+    assert_eq!(out["total"]["code"], 1);
+}
+
+#[test]
+fn a_merge_base_is_named_by_its_two_sides() {
+    let repo = diverged();
+
+    let out = json(&[
+        "-C",
+        repo.path().to_str().unwrap(),
+        "git-merge:main:topic",
+        "git:topic",
+        "--format",
+        "json",
+    ]);
+    assert_eq!(out["source"], "merge-base(main, topic) → topic");
+}
+
+#[test]
+fn a_merge_base_can_be_counted_on_its_own() {
+    let repo = diverged();
+
+    let out = json(&[
+        "-C",
+        repo.path().to_str().unwrap(),
+        "git-merge:main:topic",
+        "--format",
+        "json",
+    ]);
+    assert_eq!(out["source"], "merge-base(main, topic)");
+    assert_eq!(out["total"]["code"], 1);
+}
+
+#[test]
+fn an_unresolvable_side_of_a_merge_base_fails_before_counting() {
+    let repo = diverged();
+    let out = bin()
+        .args(["-C", repo.path().to_str().unwrap(), "git-merge:main:nope"])
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("nope"), "unhelpful error: {stderr}");
+    assert!(
+        stderr.contains("never fetches"),
+        "unhelpful error: {stderr}"
+    );
+}
+
 // -- ref notation ------------------------------------------------------------
 
 #[test]
@@ -790,6 +999,13 @@ fn an_empty_git_revision_is_rejected() {
     let out = bin().args(["git:"]).output().unwrap();
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("git:origin/main"));
+}
+
+#[test]
+fn a_merge_base_with_one_revision_is_rejected() {
+    let out = bin().args(["git-merge:main"]).output().unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("git-merge:origin/main:HEAD"));
 }
 
 #[test]

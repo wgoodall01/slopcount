@@ -17,7 +17,7 @@ mod ignore_vfs;
 
 pub use dir::{DirVfs, IgnoreConfig};
 pub use empty::EmptyVfs;
-pub use git::GitVfs;
+pub use git::{merge_base_label, GitVfs};
 pub use ignore_vfs::{IgnoreRules, IgnoreVfs};
 
 /// A boxed byte stream, as returned by [`Vfs::open`].

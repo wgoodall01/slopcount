@@ -1,20 +1,21 @@
 # slopcount
 
-Counts lines of code in a directory or a git tree, broken down by **code /
-comment / blank** — and, crucially, by whether the lines are **tests**.
+Counts lines of code in a directory or a git tree, broken down into
+**implementation / documentation / test** — three disjoint buckets, so no line
+is counted twice.
 
 ```
 $ slopcount
 slopcount  origin/main → .  (net change)
 ────────────────────────────────────────────────────
-LANGUAGE  FILES  CODE  DOC  TEST  TOTAL  DOC%  TEST%
+LANGUAGE  FILES  IMPL  DOC  TEST  TOTAL  DOC%  TEST%
 ────────────────────────────────────────────────────
-Systems       0   +15    0   +12    +19    0%    80%
-└─  Rust      0   +15    0   +12    +19    0%    80%
+Systems       0    +3    0   +12    +19    0%    80%
+└─  Rust      0    +3    0   +12    +19    0%    80%
 ────────────────────────────────────────────────────
-TOTAL         0   +15    0   +12    +19    0%    80%
+TOTAL         0    +3    0   +12    +19    0%    80%
 ────────────────────────────────────────────────────
-+19 lines changed: +15 code, of which +12 (80%) is test · 0 documentation (0% of all lines)
++19 lines changed: +3 implementation · +12 test (80% of code) · 0 documentation (0% of all lines)
 ```
 
 Eighty percent of that branch was tests.
@@ -146,19 +147,20 @@ make a tree look busy.
 
 ### Reading the output
 
-`CODE` and `DOC` are totals — `DOC` being comment lines, documentation in the
-sense that matters here. `TEST` is the subset of `CODE` that is test code and
-`TEST%` is that share, so in the header example 15 code lines changed and 12 of
+`IMPL`, `DOC` and `TEST` are **disjoint**: no line is in more than one of them.
+`IMPL` is code that is not test code, `DOC` is comment lines — documentation, in
+the sense that matters here — and `TEST` is test code. `TEST%` is the test share
+of code, `IMPL + TEST`, so in the header example 15 code lines changed and 12 of
 them were tests. `DOC%` is documentation as a share of every line counted.
 
 `TOTAL` is every line, blanks included; blanks have no column of their own, so
-`CODE` and `DOC` do not add up to it. `--format csv` and `--format json` still
-carry the blank counts, and `--sort blanks` still sorts on them.
+`IMPL`, `DOC` and `TEST` do not add up to it. `--format csv` and `--format json`
+still carry the blank counts, and `--sort blanks` still sorts on them.
 
 In a diff, a percentage shows `—` when it would not mean anything: if a change
-deletes production code and adds tests, the *net* code change is a denominator
-the test count can exceed, and "125%" would read as a bug rather than as
-information. `CODE`, `DOC` and `TEST` still show what actually happened.
+deletes implementation code and adds tests, the *net* code change is a
+denominator the test count can exceed, and "125%" would read as a bug rather
+than as information. `IMPL`, `DOC` and `TEST` still show what actually happened.
 
 `--in` applies *inside* each ref, so both sides are rebased to the same root and
 line up — a change to `src/lib.rs` shows as one net change, not an add and a
@@ -178,7 +180,7 @@ specifically.
 $ slopcount web-app
 slopcount  web-app
 ──────────────────────────────────────────────────────────
-LANGUAGE        FILES  CODE  DOC  TEST  TOTAL  DOC%  TEST%
+LANGUAGE        FILES  IMPL  DOC  TEST  TOTAL  DOC%  TEST%
 ──────────────────────────────────────────────────────────
 Configuration       2     3    0     0      3    0%     0%
 ├─  YAML            1     2    0     0      2    0%     0%
@@ -194,7 +196,7 @@ Documentation       1     0    2     0      3   67%      —
 ──────────────────────────────────────────────────────────
 TOTAL               7     7    3     0     11   27%     0%
 ──────────────────────────────────────────────────────────
-11 lines counted: 7 code, of which 0 (0%) is test · 3 documentation (27% of all lines)
+11 lines counted: 7 implementation · 0 test (0% of code) · 3 documentation (27% of all lines)
 ```
 
 The flush-left row is the family, and it is the sum of the languages indented
@@ -223,14 +225,21 @@ committed on purpose.
 
 ```sh
 $ slopcount git:origin/topic --files --format csv
-file,files,code,comments,blanks,total,test_code,test_comments,test_blanks
-src/lib.rs,1,18,0,4,22,12,0,2
-TOTAL,1,18,0,4,22,12,0,2
+file,files,impl_code,impl_comments,impl_blanks,test_code,test_comments,test_blanks,total
+src/lib.rs,1,6,0,2,12,0,2,22
+TOTAL,1,6,0,2,12,0,2,22
 ```
 
 `--format json` emits one object with a `rows` array and a `total`, each row
-carrying `code`/`comments`/`blanks` totals plus separate `prod` and `test`
-breakdowns, and a top-level `diff` flag.
+carrying `impl` and `test` objects of `code`/`comments`/`blanks`, a `lines`
+count, and a top-level `diff` flag.
+
+Both formats follow the table: every count is disjoint. The six `impl_*` and
+`test_*` cells partition the lines counted and sum to `total` (`lines` in JSON),
+and there are deliberately no roll-ups spanning the two — so adding fields
+together can never double-count. The table's `DOC` column is
+`impl_comments + test_comments`; its `TEST%` is `test_code / (impl_code +
+test_code)`.
 
 JSON and CSV stay one row per language: the family rides along as a `family`
 field (JSON) or a leading `family` column (CSV) rather than as a roll-up row, so
@@ -283,8 +292,9 @@ if let Some(ratio) = totals.test_ratio() {
 }
 ```
 
-`Stats` splits every count into `prod` and `test`, each a `Counts { code,
-comments, blanks }`. `total()` folds the two back together.
+`Stats` splits every count into `prod` (the `IMPL` column) and `test`, each a
+`Counts { code, comments, blanks }`. The two are disjoint; `total()` folds them
+back together.
 
 ### Slice the report
 

@@ -70,8 +70,8 @@ fn counts_a_directory_and_separates_test_code() {
     assert_eq!(rust["files"], 1);
     // The `#[cfg(test)]` block, but not the function above it.
     assert_eq!(rust["test"]["code"], 7);
-    assert_eq!(rust["prod"]["code"], 3);
-    assert_eq!(rust["comments"], 1);
+    assert_eq!(rust["impl"]["code"], 3);
+    assert_eq!(rust["impl"]["comments"], 1);
     assert_eq!(out["diff"], false);
 }
 
@@ -85,7 +85,7 @@ fn defaults_to_the_current_directory() {
         .unwrap();
     assert!(out.status.success());
     let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(value["total"]["code"], 1);
+    assert_eq!(value["total"]["impl"]["code"], 1);
 }
 
 #[test]
@@ -93,14 +93,33 @@ fn the_table_output_names_its_columns_and_totals() {
     let dir = tree(&[("src/lib.rs", LIB_RS)]);
     let table = run(&[dir.path().to_str().unwrap()]);
     for expected in [
-        "LANGUAGE", "CODE", "DOC", "TEST", "TOTAL", "DOC%", "TEST%", "Rust",
+        "LANGUAGE", "IMPL", "DOC", "TEST", "TOTAL", "DOC%", "TEST%", "Rust",
     ] {
         assert!(
             table.contains(expected),
             "missing {expected:?} in:\n{table}"
         );
     }
-    assert!(table.contains("is test"), "no summary line in:\n{table}");
+    assert!(table.contains("of code"), "no summary line in:\n{table}");
+}
+
+/// `IMPL`, `DOC` and `TEST` name disjoint sets of lines: the implementation
+/// column must not double-count the lines the test column already claims.
+#[test]
+fn the_impl_column_excludes_test_lines() {
+    let dir = tree(&[("src/lib.rs", LIB_RS)]);
+    let table = run(&[dir.path().to_str().unwrap(), "--color", "never"]);
+    let total = table
+        .lines()
+        .find(|l| l.starts_with("TOTAL"))
+        .unwrap_or_else(|| panic!("no TOTAL row in:\n{table}"));
+    let cells: Vec<&str> = total.split_whitespace().skip(1).collect();
+    // FILES, IMPL, DOC, TEST: the 3 production code lines, not all 10.
+    assert_eq!(&cells[..4], &["1", "3", "1", "7"], "in:\n{table}");
+    assert!(
+        table.contains("3 implementation · 7 test"),
+        "summary does not separate impl from test in:\n{table}"
+    );
 }
 
 #[test]
@@ -110,10 +129,52 @@ fn csv_output_has_a_header_and_a_total_row() {
     let mut lines = csv.lines();
     assert_eq!(
         lines.next().unwrap(),
-        "family,language,files,code,comments,blanks,total,test_code,test_comments,test_blanks"
+        "family,language,files,impl_code,impl_comments,impl_blanks,test_code,test_comments,test_blanks,total"
     );
     assert!(csv.lines().any(|l| l.starts_with("Systems,Rust,")));
     assert!(csv.lines().any(|l| l.starts_with(",TOTAL,")));
+}
+
+/// The whole point of `impl`/`test`: they partition the lines, so a consumer
+/// can add fields without double-counting. A roll-up spanning the two would
+/// break that, so assert there isn't one.
+#[test]
+fn json_counts_are_disjoint_and_sum_to_the_line_count() {
+    let dir = tree(&[("src/lib.rs", LIB_RS)]);
+    let out = json(&[dir.path().to_str().unwrap(), "--format", "json"]);
+    let total = &out["total"];
+
+    let n = |bucket: &str, field: &str| total[bucket][field].as_i64().unwrap();
+    let summed: i64 = ["impl", "test"]
+        .iter()
+        .flat_map(|b| ["code", "comments", "blanks"].map(|f| n(b, f)))
+        .sum();
+    assert_eq!(summed, total["lines"].as_i64().unwrap(), "in {out}");
+
+    for rolled_up in ["code", "comments", "blanks", "prod"] {
+        assert!(
+            total.get(rolled_up).is_none(),
+            "{rolled_up:?} spans impl and test; it would double-count in {out}"
+        );
+    }
+}
+
+#[test]
+fn csv_counts_are_disjoint_and_sum_to_the_total_column() {
+    let dir = tree(&[("src/lib.rs", LIB_RS)]);
+    let csv = run(&[dir.path().to_str().unwrap(), "--format", "csv"]);
+    let total = csv
+        .lines()
+        .find(|l| l.starts_with(",TOTAL,"))
+        .unwrap_or_else(|| panic!("no TOTAL row in:\n{csv}"));
+    // family, label, files, then the six disjoint cells and the total.
+    let cells: Vec<i64> = total
+        .split(',')
+        .skip(3)
+        .map(|c| c.parse().unwrap())
+        .collect();
+    let (counts, total_cell) = cells.split_at(6);
+    assert_eq!(counts.iter().sum::<i64>(), total_cell[0], "in:\n{csv}");
 }
 
 // -- families ----------------------------------------------------------------
@@ -164,9 +225,9 @@ fn a_family_row_sums_the_languages_in_it() {
         "--by",
         "family",
     ]);
-    assert_eq!(row(&out, "JavaScript")["code"], 2);
+    assert_eq!(row(&out, "JavaScript")["impl"]["code"], 2);
     assert_eq!(row(&out, "JavaScript")["files"], 2);
-    assert_eq!(row(&out, "Systems")["code"], 1);
+    assert_eq!(row(&out, "Systems")["impl"]["code"], 1);
 }
 
 #[test]
@@ -220,21 +281,21 @@ fn every_dimension_produces_rows() {
     assert!(row(
         &json(&[path, "--format", "json", "--by", "language"]),
         "Rust"
-    )["code"]
+    )["impl"]["code"]
         .is_number());
     assert!(row(
         &json(&[path, "--format", "json", "--by", "extension"]),
         "rs"
-    )["code"]
+    )["impl"]["code"]
         .is_number());
     assert!(row(
         &json(&[path, "--format", "json", "--by", "directory"]),
         "src"
-    )["code"]
+    )["impl"]["code"]
         .is_number());
 
     let by_file = json(&[path, "--format", "json", "--files"]);
-    assert!(row(&by_file, "src/lib.rs")["code"].is_number());
+    assert!(row(&by_file, "src/lib.rs")["impl"]["code"].is_number());
 }
 
 #[test]
@@ -260,10 +321,10 @@ fn include_and_exclude_globs_apply() {
     let path = dir.path().to_str().unwrap();
 
     let excluded = json(&[path, "--format", "json", "-e", "vendor/"]);
-    assert_eq!(excluded["total"]["code"], 1);
+    assert_eq!(excluded["total"]["impl"]["code"], 1);
 
     let included = json(&[path, "--format", "json", "-i", "vendor/"]);
-    assert_eq!(included["total"]["code"], 1);
+    assert_eq!(included["total"]["impl"]["code"], 1);
     assert_eq!(row(&included, "Rust")["files"], 1);
 }
 
@@ -305,9 +366,12 @@ fn ignore_files_are_respected_unless_disabled() {
         ("generated/b.rs", "fn b() {}\n"),
     ]);
     let path = dir.path().to_str().unwrap();
-    assert_eq!(json(&[path, "--format", "json"])["total"]["code"], 1);
     assert_eq!(
-        json(&[path, "--format", "json", "--no-ignore", "--hidden"])["total"]["code"],
+        json(&[path, "--format", "json"])["total"]["impl"]["code"],
+        1
+    );
+    assert_eq!(
+        json(&[path, "--format", "json", "--no-ignore", "--hidden"])["total"]["impl"]["code"],
         2
     );
 }
@@ -393,11 +457,11 @@ fn a_revision_sees_the_tree_as_it_was() {
 
     let path = repo.path().to_str().unwrap();
     assert_eq!(
-        json(&["-C", path, "git:HEAD~1", "--format", "json"])["total"]["code"],
+        json(&["-C", path, "git:HEAD~1", "--format", "json"])["total"]["impl"]["code"],
         1
     );
     assert_eq!(
-        json(&["-C", path, "git:HEAD", "--format", "json"])["total"]["code"],
+        json(&["-C", path, "git:HEAD", "--format", "json"])["total"]["impl"]["code"],
         3
     );
 }
@@ -424,7 +488,7 @@ fn a_range_reports_the_net_change() {
     assert_eq!(out["diff"], true);
     let rust = row(&out, "Rust");
     // One production line added, and the whole five-line test block.
-    assert_eq!(rust["prod"]["code"], 1);
+    assert_eq!(rust["impl"]["code"], 1);
     assert_eq!(rust["test"]["code"], 5);
     // The file existed before and after, so the file count does not move.
     assert_eq!(rust["files"], 0);
@@ -446,7 +510,7 @@ fn a_range_reports_deletions_as_negative() {
         "--format",
         "json",
     ]);
-    assert_eq!(out["total"]["code"], -2);
+    assert_eq!(out["total"]["impl"]["code"], -2);
 }
 
 #[test]
@@ -486,7 +550,7 @@ fn an_open_ended_range_compares_against_the_working_directory() {
         "json",
     ]);
     assert_eq!(out["diff"], true);
-    assert_eq!(out["total"]["code"], 1);
+    assert_eq!(out["total"]["impl"]["code"], 1);
 }
 
 #[test]
@@ -505,7 +569,7 @@ fn an_unchanged_range_reports_nothing() {
         "json",
     ]);
     assert!(out["rows"].as_array().unwrap().is_empty());
-    assert_eq!(out["total"]["code"], 0);
+    assert_eq!(out["total"]["impl"]["code"], 0);
 }
 
 #[test]
@@ -524,7 +588,7 @@ fn a_git_tree_can_be_narrowed_with_an_include_glob() {
         "--format",
         "json",
     ]);
-    assert_eq!(out["total"]["code"], 1);
+    assert_eq!(out["total"]["impl"]["code"], 1);
 }
 
 #[test]
@@ -537,7 +601,7 @@ fn a_git_tree_honours_a_committed_slopcountignore() {
 
     let path = repo.path().to_str().unwrap();
     assert_eq!(
-        json(&["-C", path, "git:HEAD", "--format", "json"])["total"]["code"],
+        json(&["-C", path, "git:HEAD", "--format", "json"])["total"]["impl"]["code"],
         1
     );
     // ...unless the rules are switched off, which also reveals the dotfile.
@@ -550,7 +614,7 @@ fn a_git_tree_honours_a_committed_slopcountignore() {
             "json",
             "--no-ignore",
             "--hidden",
-        ])["total"]["code"],
+        ])["total"]["impl"]["code"],
         3
     );
 }
@@ -571,7 +635,7 @@ fn a_git_tree_still_counts_files_that_gitignore_would_exclude() {
         "--format",
         "json",
     ]);
-    assert_eq!(out["total"]["code"], 1);
+    assert_eq!(out["total"]["impl"]["code"], 1);
 }
 
 #[test]
@@ -583,11 +647,11 @@ fn a_git_tree_hides_dotfiles_like_a_directory_walk_does() {
 
     let path = repo.path().to_str().unwrap();
     assert_eq!(
-        json(&["-C", path, "git:HEAD", "--format", "json"])["total"]["code"],
+        json(&["-C", path, "git:HEAD", "--format", "json"])["total"]["impl"]["code"],
         1
     );
     assert_eq!(
-        json(&["-C", path, "git:HEAD", "--format", "json", "--hidden"])["total"]["code"],
+        json(&["-C", path, "git:HEAD", "--format", "json", "--hidden"])["total"]["impl"]["code"],
         2
     );
 }
@@ -613,7 +677,7 @@ fn with_no_arguments_it_compares_the_working_tree_to_the_default_branch() {
         format!("merge-base(origin/main, HEAD) → {}", repo.path().display())
     );
     // One line committed on top, plus one uncommitted.
-    assert_eq!(out["total"]["code"], 2);
+    assert_eq!(out["total"]["impl"]["code"], 2);
 }
 
 #[test]
@@ -653,7 +717,7 @@ fn the_default_branch_falls_back_to_a_local_branch() {
         "got {}",
         out["source"]
     );
-    assert_eq!(out["total"]["code"], 1);
+    assert_eq!(out["total"]["impl"]["code"], 1);
 }
 
 #[test]
@@ -667,7 +731,7 @@ fn on_the_default_branch_with_nothing_uncommitted_it_just_counts() {
     let out = json(&["-C", repo.path().to_str().unwrap(), "--format", "json"]);
     assert_eq!(out["diff"], false);
     assert_eq!(out["source"], repo.path().display().to_string());
-    assert_eq!(out["total"]["code"], 2);
+    assert_eq!(out["total"]["impl"]["code"], 2);
 }
 
 #[test]
@@ -680,7 +744,7 @@ fn an_untracked_file_is_work_in_progress() {
 
     let out = json(&["-C", repo.path().to_str().unwrap(), "--format", "json"]);
     assert_eq!(out["diff"], true);
-    assert_eq!(out["total"]["code"], 1);
+    assert_eq!(out["total"]["impl"]["code"], 1);
 }
 
 #[test]
@@ -708,7 +772,7 @@ fn a_staged_change_is_enough_to_compare() {
 
     let out = json(&["-C", repo.path().to_str().unwrap(), "--format", "json"]);
     assert_eq!(out["diff"], true);
-    assert_eq!(out["total"]["code"], 1);
+    assert_eq!(out["total"]["impl"]["code"], 1);
 }
 
 #[test]
@@ -735,7 +799,7 @@ fn what_landed_on_the_default_branch_meanwhile_is_not_counted() {
         format!("merge-base(origin/main, HEAD) → {}", repo.path().display())
     );
     // The one line the topic branch added, not two deletions of main's work.
-    assert_eq!(out["total"]["code"], 1);
+    assert_eq!(out["total"]["impl"]["code"], 1);
 }
 
 #[test]
@@ -748,7 +812,7 @@ fn a_detached_head_is_on_no_branch_and_so_is_compared() {
 
     let out = json(&["-C", repo.path().to_str().unwrap(), "--format", "json"]);
     assert_eq!(out["diff"], true);
-    assert_eq!(out["total"]["code"], 0);
+    assert_eq!(out["total"]["impl"]["code"], 0);
 }
 
 #[test]
@@ -792,7 +856,7 @@ fn with_no_arguments_outside_a_repository_it_just_counts() {
     assert!(out.status.success());
     let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(value["diff"], false);
-    assert_eq!(value["total"]["code"], 1);
+    assert_eq!(value["total"]["impl"]["code"], 1);
 }
 
 #[test]
@@ -813,7 +877,7 @@ fn with_no_arguments_it_covers_the_whole_repo_from_a_subdirectory() {
         .unwrap();
     assert!(out.status.success());
     let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(value["total"]["code"], 2);
+    assert_eq!(value["total"]["impl"]["code"], 2);
 }
 
 // -- two sources -------------------------------------------------------------
@@ -833,7 +897,7 @@ fn two_directories_are_compared() {
     ]);
     assert_eq!(out["diff"], true);
     // Two lines gone from lib.rs, two new files' worth added.
-    assert_eq!(out["total"]["code"], 1);
+    assert_eq!(out["total"]["impl"]["code"], 1);
     assert_eq!(out["total"]["files"], 1);
 }
 
@@ -852,7 +916,7 @@ fn a_git_revision_can_be_compared_against_a_directory() {
         "--format",
         "json",
     ]);
-    assert_eq!(out["total"]["code"], 1);
+    assert_eq!(out["total"]["impl"]["code"], 1);
 }
 
 #[test]
@@ -879,7 +943,7 @@ fn two_revisions_of_different_branches_are_compared() {
     assert_eq!(out["source"], "main → topic");
     // Everything the topic branch added was tests.
     assert_eq!(row(&out, "Rust")["test"]["code"], 5);
-    assert_eq!(row(&out, "Rust")["prod"]["code"], 0);
+    assert_eq!(row(&out, "Rust")["impl"]["code"], 0);
 }
 
 // -- merge bases -------------------------------------------------------------
@@ -912,7 +976,7 @@ fn a_merge_base_ignores_what_landed_on_the_other_branch() {
         "json",
     ]);
     // The one line the topic branch added; main's two are not in the diff.
-    assert_eq!(out["total"]["code"], 1);
+    assert_eq!(out["total"]["impl"]["code"], 1);
 }
 
 #[test]
@@ -942,7 +1006,7 @@ fn a_merge_base_can_be_counted_on_its_own() {
         "json",
     ]);
     assert_eq!(out["source"], "merge-base(main, topic)");
-    assert_eq!(out["total"]["code"], 1);
+    assert_eq!(out["total"]["impl"]["code"], 1);
 }
 
 #[test]
@@ -975,12 +1039,12 @@ fn a_bare_word_is_treated_as_a_path_not_a_revision() {
 
     // Bare: the directory, so only what is inside it.
     assert_eq!(
-        json(&["-C", path, "main", "--format", "json"])["total"]["code"],
+        json(&["-C", path, "main", "--format", "json"])["total"]["impl"]["code"],
         1
     );
     // Prefixed: the branch, so the whole tree.
     assert_eq!(
-        json(&["-C", path, "git:main", "--format", "json"])["total"]["code"],
+        json(&["-C", path, "git:main", "--format", "json"])["total"]["impl"]["code"],
         3
     );
 }
@@ -1024,9 +1088,12 @@ fn in_narrows_a_single_source() {
     ]);
     let path = dir.path().to_str().unwrap();
 
-    assert_eq!(json(&[path, "--format", "json"])["total"]["code"], 3);
     assert_eq!(
-        json(&[path, "--in", "src", "--format", "json"])["total"]["code"],
+        json(&[path, "--format", "json"])["total"]["impl"]["code"],
+        3
+    );
+    assert_eq!(
+        json(&[path, "--in", "src", "--format", "json"])["total"]["impl"]["code"],
         1
     );
 }
@@ -1050,7 +1117,7 @@ fn in_narrows_both_sides_of_a_directory_comparison() {
         "--format",
         "json",
     ]);
-    assert_eq!(out["total"]["code"], 1);
+    assert_eq!(out["total"]["impl"]["code"], 1);
 }
 
 #[test]
@@ -1106,7 +1173,7 @@ fn in_rebases_paths_so_the_two_sides_line_up() {
     // The same file on both sides, so it is one net change, not an add plus a
     // delete -- which is what proves the rebasing lines the sides up.
     assert_eq!(out["rows"][0]["files"], 0);
-    assert_eq!(out["rows"][0]["code"], 1);
+    assert_eq!(out["rows"][0]["impl"]["code"], 1);
 }
 
 #[test]
@@ -1127,7 +1194,7 @@ fn a_subdirectory_present_on_only_one_side_counts_as_added() {
         "--format",
         "json",
     ]);
-    assert_eq!(out["total"]["code"], 2);
+    assert_eq!(out["total"]["impl"]["code"], 2);
     assert_eq!(out["total"]["files"], 1);
     assert!(
         out["source"].as_str().unwrap().contains("(absent)"),
@@ -1155,7 +1222,7 @@ fn a_subdirectory_removed_between_the_sides_counts_as_deleted() {
         "--format",
         "json",
     ]);
-    assert_eq!(out["total"]["code"], -2);
+    assert_eq!(out["total"]["impl"]["code"], -2);
     assert_eq!(out["total"]["files"], -1);
 }
 
@@ -1214,7 +1281,7 @@ fn in_applies_to_the_no_argument_default() {
         "json",
     ]);
     assert_eq!(out["diff"], true);
-    assert_eq!(out["total"]["code"], 1);
+    assert_eq!(out["total"]["impl"]["code"], 1);
 }
 
 #[test]
@@ -1233,7 +1300,7 @@ fn in_can_name_a_nested_directory() {
         "--format",
         "json",
     ]);
-    assert_eq!(out["total"]["code"], 1);
+    assert_eq!(out["total"]["impl"]["code"], 1);
 }
 
 #[test]
@@ -1242,7 +1309,7 @@ fn in_tolerates_a_trailing_slash() {
     let path = dir.path().to_str().unwrap();
     for spelling in ["src", "src/", "./src"] {
         assert_eq!(
-            json(&[path, "--in", spelling, "--format", "json"])["total"]["code"],
+            json(&[path, "--in", spelling, "--format", "json"])["total"]["impl"]["code"],
             1,
             "{spelling:?}"
         );
@@ -1295,6 +1362,6 @@ fn listing_languages_shows_which_ones_detect_tests() {
 fn an_empty_directory_reports_zero() {
     let dir = tempfile::tempdir().unwrap();
     let out = json(&[dir.path().to_str().unwrap(), "--format", "json"]);
-    assert_eq!(out["total"]["code"], 0);
+    assert_eq!(out["total"]["impl"]["code"], 0);
     assert!(out["rows"].as_array().unwrap().is_empty());
 }

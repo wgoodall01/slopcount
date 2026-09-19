@@ -330,9 +330,9 @@ fn number(n: i64, signed: bool) -> String {
 /// The share of one count in another, as a percentage.
 ///
 /// Returns `None` when the figure would not mean anything. That happens in a
-/// diff: if a change deletes production code and adds tests, the *net* code
-/// change is a denominator the test count can exceed, and "125%" reads as a
-/// bug rather than as information. The CODE and TEST columns still show what
+/// diff: if a change deletes implementation code and adds tests, the *net*
+/// code change is a denominator the test count can exceed, and "125%" reads as
+/// a bug rather than as information. The IMPL and TEST columns still show what
 /// actually happened.
 fn share(part: i64, whole: i64) -> Option<f64> {
     (whole > 0 && (0..=whole).contains(&part)).then(|| 100.0 * part as f64 / whole as f64)
@@ -349,16 +349,17 @@ fn test_share(stats: &SignedStats) -> String {
     render_share(stats.test.code, stats.total().code)
 }
 
-/// `DOC` is comment lines — documentation, in the sense that matters here.
-/// Blanks have no column of their own; they are in `TOTAL`, which is every
-/// line counted.
-const HEADERS: [&str; 7] = ["FILES", "CODE", "DOC", "TEST", "TOTAL", "DOC%", "TEST%"];
+/// `IMPL`, `DOC` and `TEST` are disjoint: implementation code lines, comment
+/// lines — documentation, in the sense that matters here — and test code lines,
+/// with no line counted twice. Blanks have no column of their own; they are in
+/// `TOTAL`, which is every line counted.
+const HEADERS: [&str; 7] = ["FILES", "IMPL", "DOC", "TEST", "TOTAL", "DOC%", "TEST%"];
 
 fn cells(row: &Row, signed: bool) -> [String; 7] {
     let total = row.stats.total();
     [
         number(row.files, signed),
-        number(total.code, signed),
+        number(row.stats.prod.code, signed),
         number(total.comments, signed),
         number(row.stats.test.code, signed),
         number(row.stats.lines(), signed),
@@ -499,9 +500,9 @@ fn summary(total: &Row, signed: bool) -> String {
     let all = stats.total();
     let verb = if signed { "changed" } else { "counted" };
     format!(
-        "{} lines {verb}: {} code, of which {} ({}) is test · {} documentation ({} of all lines)",
+        "{} lines {verb}: {} implementation · {} test ({} of code) · {} documentation ({} of all lines)",
         number(stats.lines(), signed),
-        number(all.code, signed),
+        number(stats.prod.code, signed),
         number(stats.test.code, signed),
         render_share(stats.test.code, all.code),
         number(all.comments, signed),
@@ -509,16 +510,18 @@ fn summary(total: &Row, signed: bool) -> String {
     )
 }
 
+/// Every count column is disjoint: the six `impl_*`/`test_*` cells partition
+/// the lines, and `total` is their sum. Nothing is counted twice, so a
+/// consumer can add whichever of them it cares about without double-counting.
 pub fn csv(label_heading: &str, rows: &[Row]) -> String {
     let families = rows.iter().any(|r| r.family.is_some());
     let mut out = String::new();
     out.push_str(&format!(
-        "{}{},files,code,comments,blanks,total,test_code,test_comments,test_blanks\n",
+        "{}{},files,impl_code,impl_comments,impl_blanks,test_code,test_comments,test_blanks,total\n",
         if families { "family," } else { "" },
         label_heading.to_lowercase()
     ));
     for row in rows.iter().chain(std::iter::once(&total_row(rows))) {
-        let total = row.stats.total();
         if families {
             out.push_str(&format!("{},", escape(row.family.as_deref().unwrap_or(""))));
         }
@@ -526,13 +529,13 @@ pub fn csv(label_heading: &str, rows: &[Row]) -> String {
             "{},{},{},{},{},{},{},{},{}\n",
             escape(&row.label),
             row.files,
-            total.code,
-            total.comments,
-            total.blanks,
-            row.stats.lines(),
+            row.stats.prod.code,
+            row.stats.prod.comments,
+            row.stats.prod.blanks,
             row.stats.test.code,
             row.stats.test.comments,
             row.stats.test.blanks,
+            row.stats.lines(),
         ));
     }
     out
@@ -546,17 +549,15 @@ fn escape(field: &str) -> String {
     }
 }
 
+/// Every count is disjoint: `impl` and `test` partition the lines, and `lines`
+/// is their sum. There are deliberately no roll-ups that span the two, so a
+/// consumer adding fields together can never double-count.
 pub fn json(source: &str, dimension: &str, rows: &[Row], diff: bool) -> serde_json::Value {
     let row_json = |row: &Row| {
-        let total = row.stats.total();
         let mut value = serde_json::json!({
             "label": row.label,
             "files": row.files,
-            "code": total.code,
-            "comments": total.comments,
-            "blanks": total.blanks,
-            "lines": row.stats.lines(),
-            "prod": {
+            "impl": {
                 "code": row.stats.prod.code,
                 "comments": row.stats.prod.comments,
                 "blanks": row.stats.prod.blanks,
@@ -566,6 +567,7 @@ pub fn json(source: &str, dimension: &str, rows: &[Row], diff: bool) -> serde_js
                 "comments": row.stats.test.comments,
                 "blanks": row.stats.test.blanks,
             },
+            "lines": row.stats.lines(),
         });
         if let Some(family) = &row.family {
             value["family"] = serde_json::Value::String(family.clone());

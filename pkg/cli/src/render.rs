@@ -245,55 +245,81 @@ fn color() -> bool {
     *COLOR.get().unwrap_or(&false)
 }
 
+/// How a cell is painted: an emphasis, and — in a diff — the colour of its
+/// sign. The two are independent, so a bold row still shows its gains green
+/// and its losses red.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Style {
+    emphasis: Option<Emphasis>,
+    color: Option<Color>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Style {
-    None,
+enum Emphasis {
     Bold,
     Dim,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Color {
     Added,
     Removed,
 }
 
 impl Style {
-    /// `self` unless it is [`Style::None`], in which case `other`. Lets a row
-    /// style (bold for a family) win over a per-cell one.
-    fn or(self, other: Style) -> Style {
-        match self {
-            Style::None => other,
-            style => style,
-        }
+    const NONE: Style = Style {
+        emphasis: None,
+        color: None,
+    };
+    const BOLD: Style = Style {
+        emphasis: Some(Emphasis::Bold),
+        color: None,
+    };
+    const DIM: Style = Style {
+        emphasis: Some(Emphasis::Dim),
+        color: None,
+    };
+
+    /// `self` with `color` layered underneath its emphasis.
+    fn colored(self, color: Option<Color>) -> Style {
+        Style { color, ..self }
     }
 
-    fn code(self) -> &'static str {
-        match self {
-            Style::None => "",
-            Style::Bold => "\x1b[1m",
-            Style::Dim => "\x1b[2m",
-            Style::Added => "\x1b[32m",
-            Style::Removed => "\x1b[31m",
-        }
+    fn params(self) -> Vec<&'static str> {
+        let emphasis = match self.emphasis {
+            Some(Emphasis::Bold) => Some("1"),
+            Some(Emphasis::Dim) => Some("2"),
+            None => None,
+        };
+        let color = match self.color {
+            Some(Color::Added) => Some("32"),
+            Some(Color::Removed) => Some("31"),
+            None => None,
+        };
+        emphasis.into_iter().chain(color).collect()
     }
 }
 
 fn paint(text: &str, style: Style) -> String {
-    if !color() || style == Style::None || text.is_empty() {
+    let params = style.params();
+    if !color() || params.is_empty() || text.is_empty() {
         return text.to_string();
     }
-    format!("{}{text}\x1b[0m", style.code())
+    format!("\x1b[{}m{text}\x1b[0m", params.join(";"))
 }
 
 /// Gains and losses get colour in a diff; plain counts stay plain.
-fn number_style(cell: &str, signed: bool) -> Style {
+fn sign_color(cell: &str, signed: bool) -> Option<Color> {
     if !signed {
-        return Style::None;
+        return None;
     }
     let trimmed = cell.trim_start();
     if trimmed.starts_with('+') {
-        Style::Added
+        Some(Color::Added)
     } else if trimmed.starts_with('-') {
-        Style::Removed
+        Some(Color::Removed)
     } else {
-        Style::None
+        None
     }
 }
 
@@ -401,42 +427,40 @@ pub fn table(header: &str, label_heading: &str, rows: &[Row], signed: bool) -> S
         for (i, cell) in cells.iter().enumerate() {
             let padded = format!("{cell:>width$}", width = widths[i]);
             s.push_str("  ");
-            s.push_str(&paint(&padded, style.or(number_style(cell, signed))));
+            s.push_str(&paint(&padded, style.colored(sign_color(cell, signed))));
         }
         s
     };
 
     let width = label_width + widths.iter().map(|w| w + 2).sum::<usize>();
-    let rule = paint(&"─".repeat(width), Style::Dim);
+    let rule = paint(&"─".repeat(width), Style::DIM);
 
     let mut out = String::new();
-    out.push_str(&paint(header, Style::Bold));
+    out.push_str(&paint(header, Style::BOLD));
     out.push('\n');
     out.push_str(&rule);
     out.push('\n');
     out.push_str(&line(
         &heading_label,
         &HEADERS.map(|h| h.to_string()),
-        Style::Dim,
+        Style::DIM,
     ));
     out.push('\n');
     out.push_str(&rule);
     out.push('\n');
     for ((row, cells), label) in rows.iter().zip(&body).zip(&labels) {
         let style = match row.kind {
-            RowKind::Family => Style::Bold,
-            _ => Style::None,
+            RowKind::Family => Style::BOLD,
+            _ => Style::NONE,
         };
         out.push_str(&line(label, cells, style));
         out.push('\n');
     }
     out.push_str(&rule);
     out.push('\n');
-    out.push_str(&line(&total_label, &total_cells, Style::Bold));
+    out.push_str(&line(&total_label, &total_cells, Style::BOLD));
     out.push('\n');
     out.push_str(&rule);
-    out.push('\n');
-    out.push_str(&summary(&total, signed));
     out.push('\n');
     out
 }
@@ -468,7 +492,7 @@ impl LabelCell {
         let pad = width.saturating_sub(self.width());
         format!(
             "{}{}{:pad$}",
-            paint(self.prefix, Style::Dim),
+            paint(self.prefix, Style::DIM),
             paint(&self.text, style),
             "",
             pad = pad
@@ -492,22 +516,6 @@ fn label_cell(row: &Row) -> LabelCell {
 /// and family names are ASCII, and the tree glyphs are single-width.
 fn width_of(s: &str) -> usize {
     s.chars().count()
-}
-
-/// The one-line headline: what share of the work was tests and docs.
-fn summary(total: &Row, signed: bool) -> String {
-    let stats = total.stats;
-    let all = stats.total();
-    let verb = if signed { "changed" } else { "counted" };
-    format!(
-        "{} lines {verb}: {} implementation · {} test ({} of code) · {} documentation ({} of all lines)",
-        number(stats.lines(), signed),
-        number(stats.prod.code, signed),
-        number(stats.test.code, signed),
-        render_share(stats.test.code, all.code),
-        number(all.comments, signed),
-        render_share(all.comments, stats.lines()),
-    )
 }
 
 /// Every count column is disjoint: the six `impl_*`/`test_*` cells partition

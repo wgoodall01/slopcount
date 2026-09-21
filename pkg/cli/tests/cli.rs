@@ -100,7 +100,6 @@ fn the_table_output_names_its_columns_and_totals() {
             "missing {expected:?} in:\n{table}"
         );
     }
-    assert!(table.contains("of code"), "no summary line in:\n{table}");
 }
 
 /// `IMPL`, `DOC` and `TEST` name disjoint sets of lines: the implementation
@@ -116,10 +115,6 @@ fn the_impl_column_excludes_test_lines() {
     let cells: Vec<&str> = total.split_whitespace().skip(1).collect();
     // FILES, IMPL, DOC, TEST: the 3 production code lines, not all 10.
     assert_eq!(&cells[..4], &["1", "3", "1", "7"], "in:\n{table}");
-    assert!(
-        table.contains("3 implementation · 7 test"),
-        "summary does not separate impl from test in:\n{table}"
-    );
 }
 
 #[test]
@@ -266,6 +261,33 @@ fn color_is_off_unless_asked_for() {
     assert!(!run(&[path]).contains('\x1b'));
     assert!(run(&[path, "--color", "always"]).contains('\x1b'));
     assert!(!run(&[path, "--color", "never"]).contains('\x1b'));
+}
+
+#[test]
+fn bold_rows_keep_the_colour_of_their_sign() {
+    let repo = Repo::init();
+    repo.write("a.rs", "fn a() {}\n");
+    repo.commit("first");
+    repo.write("a.rs", "fn a() {}\nfn b() {}\n");
+    repo.commit("second");
+
+    let out = run(&[
+        "-C",
+        repo.path().to_str().unwrap(),
+        "git:HEAD~1",
+        "git:HEAD",
+        "--color",
+        "always",
+    ]);
+    // Bold and green together: the row emphasis must not swallow the sign
+    // colour of the counts.
+    for label in ["Systems", "TOTAL"] {
+        let row = out
+            .lines()
+            .find(|l| l.starts_with(&format!("\x1b[1m{label}")))
+            .unwrap_or_else(|| panic!("no {label} row in {out:?}"));
+        assert!(row.contains("\x1b[1;32m"), "{label} not green: {row:?}");
+    }
 }
 
 // -- dimensions and filters --------------------------------------------------

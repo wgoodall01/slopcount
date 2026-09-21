@@ -15,7 +15,6 @@ Systems       0    +3    0   +12    +19    0%    80%
 ────────────────────────────────────────────────────
 TOTAL         0    +3    0   +12    +19    0%    80%
 ────────────────────────────────────────────────────
-+19 lines changed: +3 implementation · +12 test (80% of code) · 0 documentation (0% of all lines)
 ```
 
 Eighty percent of that branch was tests.
@@ -196,7 +195,6 @@ Documentation       1     0    2     0      3   67%      —
 ──────────────────────────────────────────────────────────
 TOTAL               7     7    3     0     11   27%     0%
 ──────────────────────────────────────────────────────────
-11 lines counted: 7 implementation · 0 test (0% of code) · 3 documentation (27% of all lines)
 ```
 
 The flush-left row is the family, and it is the sum of the languages indented
